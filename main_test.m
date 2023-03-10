@@ -28,6 +28,7 @@ Gog([19,20],:) = [];
 
 K = size( atlas_regions,2 ) +1;
 N = size(Gog,2)/3;
+T = size(Yog,2);
 
 %% PRE PROCESSING
 
@@ -81,22 +82,38 @@ Niter = 10;
 % main cycle
 ERR = zeros(Niter,1);
 collect_gamma = zeros(K,Niter);
-gamma = ones(K,1);
+collect_sigma = zeros(1,Niter);
+gamma2 = ones(K,1);
+sigma2 = 1;
 
-iter = 1;
+%iter = 1;
 for iter = 1:Niter
-  GAM2 = diag(L*(gamma.^2));
+  GAM2 = diag(L*gamma2);
   J = ( GG + I_A*GAM2 ) \ GY;
   if show_figs
     figure()
     plot(J(5942,:)) % arbitrary dipole in region where the actual source is located
   end
-  %V = L'*J;
-  %plot(V(1,:))
-  Q = Nk_inv * L' * mean((I_A*J).^2,2);
-  %gamma = min(Q.^(-1),1/tol);
-  gamma = 1./Q;
-  collect_gamma(:,iter) = gamma;
+  sigma2 = 1/( ( norm(G*J-Y,'fro')^2 )/(N*T) );
+  IA_J = I_A*J;
+  for k = 1:K
+    gamma2(k) = 1/( ( norm(IA_J(Rk{k},:),'fro')^2 )/(Nk(k)*T) );
+  end
+  gamma2 = gamma2/sigma2;
+  collect_gamma(:,iter) = gamma2/sigma2;
+  collect_sigma(iter) = sigma2;
   ERR(iter) = norm(G*J-Y,'fro');
-  iter = iter +1;
+  %iter = iter +1;
 end
+
+
+figure()
+plot(log(ERR))
+%title("Covariance matrix for $Y$",'interpreter','latex')
+xlabel("Iteration",'interpreter','latex')
+ylabel("$log \left\Vert G \hat{J} - Y\right\Vert_F$",'interpreter','latex')
+
+figure()
+plot(log(collect_gamma(S,:)'))
+xlabel("Iteration",'interpreter','latex')
+ylabel("$log \gamma_k^2$",'interpreter','latex')
