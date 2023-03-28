@@ -86,10 +86,12 @@ collect_sigma = zeros(1,Niter);
 gamma2 = ones(K,1);
 sigma2 = 1;
 
+K  = zeeros(M,N);
 %iter = 1;
 for iter = 1:Niter
   GAM2 = diag(L*gamma2);
-  J = ( GG + I_A*GAM2 ) \ GY;
+  %J = ( GG + I_A*GAM2 ) \ GY;
+  [K,~] = 
   if show_figs
     figure()
     plot(J(5942,:)) % arbitrary dipole in region where the actual source is located
@@ -117,3 +119,7 @@ figure()
 plot(log(collect_gamma(S,:)'))
 xlabel("Iteration",'interpreter','latex')
 ylabel("$log \gamma_k^2$",'interpreter','latex')
+
+
+n= 3;
+I_A = eye(n) - ones(n,n)/n; 
