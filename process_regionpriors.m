@@ -90,6 +90,18 @@ function sProcess = GetDescription()
   %                                               'MEG', 'MEG GRAD', 'MEG MAG', 'EEG', 'SEEG', 'ECOG'}};
   sProcess.options.sensortype.Value   = {'EEG', {'EEG', 'SEEG', 'ECOG'; ...
                                                  'EEG', 'SEEG', 'ECOG'}};
+  %
+  sProcess.options.AbsVal.Comment = 'Compute absolute values only';
+  sProcess.options.AbsVal.Type    = 'checkbox';
+  sProcess.options.AbsVal.Value   = 0;                 % Selected or not by default
+  %sProcess.options.DebugFigs.Hidden  = 0;
+  %
+  sProcess.options.FullKernel.Comment = 'Full Results?';
+  sProcess.options.FullKernel.Type    = 'combobox_label';
+  %sProcess.options.sensortype.Value   = {'EEG', {'MEG', 'MEG GRAD', 'MEG MAG', 'EEG', 'SEEG', 'ECOG'; ...
+  %                                               'MEG', 'MEG GRAD', 'MEG MAG', 'EEG', 'SEEG', 'ECOG'}};
+  sProcess.options.FullKernel.Value   = {'kernel', {'Full Result (NxT)', 'Only Kernel (NxM)', 'Both'; ...
+                                                 'full', 'kernel','both'}};
 end
 
 %% ===== FORMAT COMMENT =====
@@ -115,11 +127,14 @@ function OutputFiles = Run(sProcess, sInputs)
   params.PreWhiten    = sProcess.options.Prewhiten.Value;
   params.FullResult   = sProcess.options.FullRes.Value;
   params.DebugFigures = sProcess.options.DebugFigs.Value;
+  params.AbsRequired = sProcess.options.AbsVal.Value;
+  params.ResFormat   = sProcess.options.FullKernel.Value{1};
   %
   params_gradient = [];
   params_gradient.MaxIter   = sProcess.options.MaxIterGrad.Value{1};
   params_gradient.Method    = sProcess.options.MethodGrad.Value{1};
   params_gradient.PlotError = sProcess.options.DebugFigs.Value;
+  params_gradient.ResFormat = sProcess.options.FullKernel.Value{1};
   % Inverse options
   Method   = sProcess.options.method.Value{1};
   Modality = sProcess.options.sensortype.Value{1};
@@ -230,7 +245,7 @@ function OutputFiles = Run(sProcess, sInputs)
       % replace later: using fieldtrip functions to extract leadfield
       % matrix with appropriate filtering of bad channels
       bst_progress('text', 'Estimating inversion kernel...');
-      [InvKernel, Estim, EstimAbs, debug] = Compute(...
+      [InvKernel, Estim, debug] = Compute(...
         HeadModelMat.Gain(iChannelsData,:), ...
         DataMat.F(iChannelsData,:), ...
         NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ... % noise covariance
@@ -245,7 +260,16 @@ function OutputFiles = Run(sProcess, sInputs)
       ResultsMat = db_template('resultsmat');
       ResultsMat.ImagingKernel = InvKernel;
       ResultsMat.ImageGridAmp  = Estim;
-      ResultsMat.nComponents   = 3;
+      if params.AbsRequired
+        if strcmp(params_gradient.ResFormat,'kernel')
+          ResultsMat.nComponents   = 3;
+          disp('Request for asolute value is being ignored.')
+        else
+          ResultsMat.nComponents   = 1;
+        end
+      else
+        ResultsMat.nComponents   = 3;
+      end
       ResultsMat.Comment       = ['Source Estimate w/Region Priors; weighted via ', Method];
       ResultsMat.Function      = Method;
       ResultsMat.Time          = DataMat.Time;
@@ -311,7 +335,7 @@ end
 
 %%
 % USAGE: x = process_notch('Compute', x, sfreq, FreqList)
-function [kernel, estim, estim_abs, debug] = Compute(G, Y, COV, atlas_regions, ...
+function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   params, params_gradient, time)
 % TODO: Add documentation
 %
@@ -381,53 +405,117 @@ function [kernel, estim, estim_abs, debug] = Compute(G, Y, COV, atlas_regions, .
   debug.sigma = zeros(1,      params.MaxIter+1);
 
   gamma2 = zeros(meta.K,1);
-  W = zeros(meta.N, meta.M);
 
   % === MAIN CYCLE ===
   debug.gamma(:,1) = gamma2;
   debug.sigma(1)   = mean(diag(iCOV));
-  for iter = 1:params.MaxIter
-    % kernel is computed using another function
-    [W,~] = InversionKernel(G,iCOV,gamma2,R,S,W, meta,params_gradient);
-    if iter==1
-      % extra computing time if the initial guess was bad
-      [W,~] = InversionKernel(G,iCOV,gamma2,R,S,W, meta,params_gradient);
-    end
-    % if the sources are actually requested
-    if params.FullResult
-      % todo
-    end
-    J = W*Y;
-    if params.DebugFigures
-      figure()
-      plot(time,J(5942,:)) % arbitrary dipole in region where the actual source is located
-      xlabel('Time [s]')
-      ylabel('Current density (J) []')
-    end
-    debug.error(:,iter) = norm(G*J-Y,'fro')/(meta.N*meta.T);
-    % covariance of residuals
-    Q = zeros(meta.M,meta.M);
-    for t = 1:meta.T
-      Q = Q + (G*J(:,t)-Y(:,t))*(G*J(:,t)-Y(:,t))';
-    end
-    Q = Q/meta.T;
-    debug.sigma(iter+1) = mean(diag(iCOV));
-    if params.DebugFigures
-      PLotCov(Q);
-    end
-    
-    % update of gammas  
-    for k = 1:meta.K
-      gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
-    end
-    debug.gamma(:,iter+1) = gamma2;
+  switch params.ResFormat
+    case {'kernel','both'}
+      W = zeros(meta.N, meta.M);
+      for iter = 1:params.MaxIter
+        % kernel is computed using another function
+        [W,~] = InversionKernel(G,iCOV,gamma2,R,S,iCOV*G',W, ...
+          meta,params_gradient);
+        if iter==1
+          % extra computing time if the initial guess was bad
+          [W,~] = InversionKernel(G,iCOV,gamma2,R,S,iCOV*G',W, ...
+            meta,params_gradient);
+        end
+        if params.DebugFigures
+          figure()
+          random_line = W(5942,:)*Y;
+          plot(time,random_line) % arbitrary dipole in region where the actual source is located
+          xlabel('Time [s]')
+          ylabel('Current density (J) []')
+        end
+        err = 0;
+        for t = 1:meta.T
+          err = err + norm(G*W*Y-Y,'fro');
+        end
+        debug.error(:,iter) = err/(meta.N*meta.T);
+        % covariance of residuals
+        Q = zeros(meta.M,meta.M);
+        for t = 1:meta.T
+          Q = Q + (G*W*Y(:,t)-Y(:,t))*(G*W*Y(:,t)-Y(:,t))';
+        end
+        Q = Q/meta.T;
+        debug.sigma(iter+1) = mean(diag(Q));
+        if params.DebugFigures
+          PLotCov(Q);
+        end
+        % update of gammas  
+        for k = 1:meta.K
+          nrm = 0;
+          for t = 1:meta.T
+            nrm = nrm + norm(W(R{k},:)*Y(:,t)-mean(W(R{k},:)*Y(:,t)),'fro')^2;
+          end
+          gamma2(k) = 1/( ( nm )/(n(k)*meta.T) ) ;
+          %gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
+        end
+        debug.gamma(:,iter+1) = gamma2;
+      end
+      switch params.ResFormat
+        case 'kernel'
+          kernel = W;
+          estim  = [];
+        case 'both'
+          kernel = W;
+          estim  = W*Y;
+      end
+    case 'full'
+      for iter = 1:params.MaxIter
+        % full result is computed using another function
+        J = zeros(meta.N, meta.T);
+        [J,~] = InversionKernel(G,iCOV,gamma2,R,S,Y,J, ...
+          meta,params_gradient);
+        if iter==1
+          % extra computing time if the initial guess was bad
+          [J,~] = InversionKernel(G,iCOV,gamma2,R,S,Y,J, ...
+            meta,params_gradient);
+        end
+        if params.DebugFigures
+          figure()
+          random_line = J(5942,:);
+          plot(time,random_line) % arbitrary dipole in region where the actual source is located
+          xlabel('Time [s]')
+          ylabel('Current density (J) []')
+        end
+        err = 0;
+        for t = 1:meta.T
+          err = err + norm(G*W*Y-Y,'fro');
+        end
+        debug.error(:,iter) = err/(meta.N*meta.T);
+        % covariance of residuals
+        Q = zeros(meta.M,meta.M);
+        for t = 1:meta.T
+          Q = Q + (G*J(:,t)-Y(:,t))*(G*J(:,t)-Y(:,t))';
+        end
+        Q = Q/meta.T;
+        debug.sigma(iter+1) = mean(diag(Q));
+        if params.DebugFigures
+          PLotCov(Q);
+        end
+        % update of gammas  
+        for k = 1:meta.K
+          gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
+        end
+        debug.gamma(:,iter+1) = gamma2;
+      end
+      kernel = [];
+      estim  = J;
   end
-  kernel = W;
-  estim  = W*Y;
-  % Get magnitude at each dipole, for visualization
-  estim_abs = zeros(meta.N/3,meta.T);
-  for i = 1:meta.N/3
-    estim_abs(i,:) = vecnorm( estim((3*(i-1)+(1:3)),:), 2,1 );
+  % Get magnitude at each dipole, for visualization 
+  if params.AbsRequired
+    switch params.ResFormat
+      case 'kernel'
+        disp('Absolute values are not computed by this function.')
+      case {'full', 'both'}
+        estim_abs = zeros(meta.N/3,meta.T);
+        for i = 1:meta.N/3
+          estim_abs(i,:) = vecnorm( estim((3*(i-1)+(1:3)),:), 2,1 );
+        end
+      estim = estim_abs;
+    end
   end
   if params.DebugFigures
     figure()
@@ -446,17 +534,13 @@ end
 %% ===== ADDITIONAL FUNCTIONS =====
 
 function [W, debug_info] = ...
-  InversionKernel(G,iCOV,gamma2,R,S,W0, meta,params)
-% This algortihm construct the following matrix
-%       W = [ G'*iCOV*G + (I-A)*GAMMA2 ]^-1 * G'*iCOV
-% which is referred as the inversion kernel for the problem. This matrix
-% arise from the MAP source estimator, which is linear 
-%       J_MAP = W * Y
-% This matrix W is computed by solvng the linear system
-%       [ G'*iCOV*G + (I-A)*GAMMA2 ] * W = G'*iCOV
-% which is solved column-wise, with some code optimizations.
+  GradDescent(G,iCOV,gamma2,R,S,B,W0, meta,params)
+% This algorithm solves the following system for W
+%       [ G'*iCOV*G + (I-A)*GAMMA2 ] * W = B
+% via Gradient Descent. This implementation is optimized for the particular
+% matrices that occur in the context of the probelm of interest.
 %
-% Two method is implemented: steepest gradient descent, conjugate gradient.
+% Two method implemented: steepest gradient descent, conjugate gradient.
 %
 %-------------------------------------------------------------------------
 % INPUT
@@ -465,6 +549,7 @@ function [W, debug_info] = ...
 %     iCOV  Inverse of covariance matrix of Y|J, MxM
 %   gamma2  Regional weights, Kx1
 %       Rk  Region indicators, Nx1
+%        B  (kernel) iCOV*G', N*M (full) Y, NxT
 %       W0  Initial estimation of the kernel, NxM
 %     meta  Metadata of matrices: N, M, K
 %
@@ -477,7 +562,7 @@ function [W, debug_info] = ...
 %-------------------------------------------------------------------------
 % OUTPUT
 %
-%        W  Inversion kernel, NxM
+%        W  (kernel) Inversion kernel, NxM (full) J, N*T
 %
 %-------------------------------------------------------------------------
 % INPUT (OPTIONAL)
@@ -490,11 +575,10 @@ function [W, debug_info] = ...
 W = W0;
 debug_info = [];
 debug_info.ERR = zeros(meta.M, params.MaxIter);
-GS = G'*iCOV;
 switch params.Method
 case 'SteepestDescent'
   for i = 1:meta.M
-    Gi = GS(:,i);
+    Gi = B(:,i);
     Wi = W(:,i);
     for iter = 1:params.MaxIter
       % p = b-A*x
@@ -527,7 +611,7 @@ case 'SteepestDescent'
 case 'ConjugateGradient'
   for i = 1:meta.M
     % b <- Gi,   x <- Wi
-    Gi = GS(:,i);
+    Gi = B(:,i);
     Wi = W(:,i);
     bestW = Wi;
     bestE = Inf;
