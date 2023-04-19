@@ -42,7 +42,7 @@ function sProcess = GetDescription()
   %
   sProcess.options.MaxIterGrad.Comment = 'Max iterations (Kernel): ';
   sProcess.options.MaxIterGrad.Type    = 'value';
-  sProcess.options.MaxIterGrad.Value   = {350, '', 0};   % {Default value, units, precision}
+  sProcess.options.MaxIterGrad.Value   = {35, '', 0};   % {Default value, units, precision}
   sProcess.options.MaxIterGrad.Class   = 'Debug';
   %sProcess.options.MaxIterGrad.Hidden  = 0;
   %
@@ -59,10 +59,6 @@ function sProcess = GetDescription()
   sProcess.options.Prewhiten.Type    = 'checkbox';
   sProcess.options.Prewhiten.Value   = 0;                 % Selected or not by default
   sProcess.options.DebugFigs.Class   = 'Pre';
-  %
-  sProcess.options.FullRes.Comment = 'Compute full estimate (not only kernel)';
-  sProcess.options.FullRes.Type    = 'checkbox';
-  sProcess.options.FullRes.Value   = 1;                 % Selected or not by default
   %
   sProcess.options.MaxIter.Comment = 'Max iterations: ';
   sProcess.options.MaxIter.Type    = 'value';
@@ -125,7 +121,6 @@ function OutputFiles = Run(sProcess, sInputs)
   params.MaxIter      = sProcess.options.MaxIter.Value{1};
   params.PlotError    = sProcess.options.DebugFigs.Value;
   params.PreWhiten    = sProcess.options.Prewhiten.Value;
-  params.FullResult   = sProcess.options.FullRes.Value;
   params.DebugFigures = sProcess.options.DebugFigs.Value;
   params.AbsRequired = sProcess.options.AbsVal.Value;
   params.ResFormat   = sProcess.options.FullKernel.Value{1};
@@ -134,7 +129,6 @@ function OutputFiles = Run(sProcess, sInputs)
   params_gradient.MaxIter   = sProcess.options.MaxIterGrad.Value{1};
   params_gradient.Method    = sProcess.options.MethodGrad.Value{1};
   params_gradient.PlotError = sProcess.options.DebugFigs.Value;
-  params_gradient.ResFormat = sProcess.options.FullKernel.Value{1};
   % Inverse options
   Method   = sProcess.options.method.Value{1};
   Modality = sProcess.options.sensortype.Value{1};
@@ -405,22 +399,29 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   debug.sigma = zeros(1,      params.MaxIter+1);
 
   gamma2 = zeros(meta.K,1);
+  Gnorm  = vecnorm(G,2,1);
+  for k = 1:meta.K
+    gamma2(k) = mean(Gnorm(R{k}));
+  end
 
   % === MAIN CYCLE ===
   debug.gamma(:,1) = gamma2;
   debug.sigma(1)   = mean(diag(iCOV));
   switch params.ResFormat
     case {'kernel','both'}
-      W = zeros(meta.N, meta.M);
+      W  = zeros(meta.N, meta.M);
+      Id = eye(meta.M);
       for iter = 1:params.MaxIter
         % kernel is computed using another function
-        [W,~] = InversionKernel(G,iCOV,gamma2,R,S,iCOV*G',W, ...
-          meta,params_gradient);
         if iter==1
           % extra computing time if the initial guess was bad
-          [W,~] = InversionKernel(G,iCOV,gamma2,R,S,iCOV*G',W, ...
+          params.MaxIter = params.MaxIter*10;
+          [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
             meta,params_gradient);
+          params.MaxIter = params.MaxIter/10;
         end
+        [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
+          meta,params_gradient);
         if params.DebugFigures
           figure()
           random_line = W(5942,:)*Y;
@@ -463,16 +464,18 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
           estim  = W*Y;
       end
     case 'full'
+      J = zeros(meta.N, meta.T);
       for iter = 1:params.MaxIter
         % full result is computed using another function
-        J = zeros(meta.N, meta.T);
-        [J,~] = InversionKernel(G,iCOV,gamma2,R,S,Y,J, ...
-          meta,params_gradient);
         if iter==1
           % extra computing time if the initial guess was bad
-          [J,~] = InversionKernel(G,iCOV,gamma2,R,S,Y,J, ...
+          params.MaxIter = params.MaxIter*10;
+          [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
             meta,params_gradient);
+          params.MaxIter = params.MaxIter/10;
         end
+        [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
+          meta,params_gradient);
         if params.DebugFigures
           figure()
           random_line = J(5942,:);
@@ -482,7 +485,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
         end
         err = 0;
         for t = 1:meta.T
-          err = err + norm(G*W*Y-Y,'fro');
+          err = err + norm(G*J-Y,'fro');
         end
         debug.error(:,iter) = err/(meta.N*meta.T);
         % covariance of residuals
@@ -536,7 +539,7 @@ end
 function [W, debug_info] = ...
   GradDescent(G,iCOV,gamma2,R,S,B,W0, meta,params)
 % This algorithm solves the following system for W
-%       [ G'*iCOV*G + (I-A)*GAMMA2 ] * W = B
+%       [ G'*iCOV*G + (I-A)*GAMMA2 ] * W = iCOV*G'*B
 % via Gradient Descent. This implementation is optimized for the particular
 % matrices that occur in the context of the probelm of interest.
 %
@@ -549,7 +552,7 @@ function [W, debug_info] = ...
 %     iCOV  Inverse of covariance matrix of Y|J, MxM
 %   gamma2  Regional weights, Kx1
 %       Rk  Region indicators, Nx1
-%        B  (kernel) iCOV*G', N*M (full) Y, NxT
+%        B  (kernel) idetity, M*M (full) Y, MxT
 %       W0  Initial estimation of the kernel, NxM
 %     meta  Metadata of matrices: N, M, K
 %
@@ -577,9 +580,9 @@ debug_info = [];
 debug_info.ERR = zeros(meta.M, params.MaxIter);
 switch params.Method
 case 'SteepestDescent'
-  for i = 1:meta.M
-    Gi = B(:,i);
-    Wi = W(:,i);
+  for i = 1:size(W0,2)
+    Bi = G'*iCOV* B(:,i);
+    Wi = W0(:,i);
     for iter = 1:params.MaxIter
       % p = b-A*x
       p  = zeros(meta.N,1);
@@ -590,7 +593,7 @@ case 'SteepestDescent'
           p(R{k}) = -(Wi(R{k}) )*gamma2(k);
         end
       end
-      p = p + Gi - (G'*(iCOV*(G*Wi)));
+      p = p + Bi - (G'*(iCOV*(G*Wi)));
       % alpha = p'*p / p'*A*p
       Ap = zeros(meta.N,1);
       for k = 1:meta.K
@@ -609,10 +612,10 @@ case 'SteepestDescent'
     W(:,i) = Wi;
   end
 case 'ConjugateGradient'
-  for i = 1:meta.M
-    % b <- Gi,   x <- Wi
-    Gi = B(:,i);
-    Wi = W(:,i);
+  for i = 1:size(W0,2)
+    % b <- Bi,   x <- Wi
+    Bi = G'*iCOV* B(:,i);
+    Wi = W0(:,i);
     bestW = Wi;
     bestE = Inf;
     % p0 = b-A*x0,   r0 = p0
@@ -624,7 +627,7 @@ case 'ConjugateGradient'
         p(R{k}) = -(Wi(R{k}) )*gamma2(k);
       end
     end
-    p = p + Gi - (G'*(iCOV*(G*Wi)));
+    p = p + Bi - (G'*(iCOV*(G*Wi)));
     r = p;
     for iter = 1:params.MaxIter
       % alpha = p'*r / p'*A*p
