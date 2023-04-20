@@ -42,7 +42,7 @@ function sProcess = GetDescription()
   %
   sProcess.options.MaxIterGrad.Comment = 'Max iterations (Kernel): ';
   sProcess.options.MaxIterGrad.Type    = 'value';
-  sProcess.options.MaxIterGrad.Value   = {35, '', 0};   % {Default value, units, precision}
+  sProcess.options.MaxIterGrad.Value   = {100, '', 0};   % {Default value, units, precision}
   sProcess.options.MaxIterGrad.Class   = 'Debug';
   %sProcess.options.MaxIterGrad.Hidden  = 0;
   %
@@ -192,24 +192,24 @@ function OutputFiles = Run(sProcess, sInputs)
       ResultsMat_atlas = in_bst_data(DataFile);
       % Error: cannot process results from volume grids
       if ismember(HeadModelMat.HeadModelType, {'volume', 'mixed'})
-        bst_report('Error', sProcess, sInput, 'Atlases are not supported yet for volumic grids.');
+        bst_report('Error', sProcess, sInputs, 'Atlases are not supported yet for volumic grids.');
         return;
       elseif isempty(HeadModelMat.SurfaceFile)
-        bst_report('Error', sProcess, sInput, 'Surface file is not defined.');
+        bst_report('Error', sProcess, sInputs, 'Surface file is not defined.');
         return;
       elseif isfield(ResultsMat_atlas, 'Atlas') && ~isempty(ResultsMat_atlas.Atlas)
-        bst_report('Error', sProcess, sInput, 'File is already based on an atlas.');
+        bst_report('Error', sProcess, sInputs, 'File is already based on an atlas.');
         return;
       end
       % Load surface
       SurfaceMat = in_tess_bst(HeadModelMat.SurfaceFile);
       if isempty(SurfaceMat.Atlas) 
-        bst_report('Error', sProcess, sInput, 'No atlases available in the current surface.');
+        bst_report('Error', sProcess, sInputs, 'No atlases available in the current surface.');
         return;
       end
       % Forbid this process on mixed head models
       %if (ResultsMat_atlas.nComponents == 0)
-      %  bst_report('Error', sProcess, sInput, 'Cannot run this process on mixed source models.');
+      %  bst_report('Error', sProcess, sInputs, 'Cannot run this process on mixed source models.');
       %  return;
       %end
       % Get the atlas to use
@@ -217,7 +217,7 @@ function OutputFiles = Run(sProcess, sInputs)
       if ~isempty(sProcess.options.AtlasRegions.Value)
         iAtlas = find(strcmpi({SurfaceMat.Atlas.Name}, sProcess.options.AtlasRegions.Value));
         if isempty(iAtlas)
-          bst_report('Warning', sProcess, sInput, ['Atlas not found: "' sProcess.options.AtlasRegions.Value '"']);
+          bst_report('Warning', sProcess, sInputs, ['Atlas not found: "' sProcess.options.AtlasRegions.Value '"']);
         end
       end
       if isempty(iAtlas)
@@ -228,7 +228,7 @@ function OutputFiles = Run(sProcess, sInputs)
       end
       % Check atlas 
       if isempty(SurfaceMat.Atlas(iAtlas).Scouts)
-        bst_report('Error', sProcess, sInput, 'No available scouts in the selected atlas.');
+        bst_report('Error', sProcess, sInputs, 'No available scouts in the selected atlas.');
         return;
       end
       bst_report('Info', sProcess, sInputs, ['Using atlas: "' SurfaceMat.Atlas(iAtlas).Name '"']);
@@ -378,25 +378,42 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   S = true(meta.K,1);
   n = zeros(meta.K,1);
   R = cell( 3*(meta.K-1),1 );
-  unassigned = true(meta.N/3,1);
+  unassigned = true(meta.N,1);
   for k = 1:(meta.K-1)
     for nu = 1:3
       R{3*k-3+nu} = atlas_regions(k).Vertices*3-3+nu;
+      unassigned(R{3*k-3+nu}) = false;
     end
     %R{k} = atlas_regions(k).Vertices;
     n(k) = size(R{3*k-1},2);
-    unassigned(R{k}) = false;
   end
   if any(unassigned)
-    idx = 1:(meta.N/3);
+    idx = 1:(meta.N);
+    idx = unique(ceil(idx(unassigned)/3-1));
     for nu = 1:3
-      R{3*meta.K-3+nu} = idx(unassigned)*3-3+nu;
+      R{3*meta.K-3+nu} = idx*3-3+nu;
     end
     %R{meta.K} = idx(unassigned);
-    n(meta.K) = size(R{meta.K},2);
+    n(meta.K) = size(R{meta.K*3-1},2);
   else
     meta.K = meta.K-1;
     n(meta.K) = [];
+  end
+  if false
+    figure()
+    hold on
+    for k = 1:meta.K
+      idx = unique(ceil(R{k*3-1}/3));
+      if k ~= meta.K
+        %q = k*ones(n(k),1);
+        q = 'blue';
+      else
+        q = 'red';
+      end
+      scatter3( forward_model_icbm152.GridLoc(idx,1),...
+        forward_model_icbm152.GridLoc(idx,2),...
+        forward_model_icbm152.GridLoc(idx,3),100,q,'.')
+    end
   end
   
   % === INITIALIZE ===
@@ -407,7 +424,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   gamma2 = zeros(meta.K,1);
   Gnorm  = vecnorm(G,2,1);
   for k = 1:meta.K
-    gamma2(k) = median( [Gnorm(R{3*k-3+1}),Gnorm(R{3*k-3+2}),Gnorm(R{3*k-3+3})] );
+    gamma2(k) = median( [Gnorm(R{3*k-3+1}),Gnorm(R{3*k-3+2}),Gnorm(R{3*k-3+3})] )^2;
   end
 
   % === MAIN CYCLE ===
@@ -540,7 +557,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
     ylabel("$log \left\Vert G \hat{J} - Y\right\Vert_F$",'interpreter','latex')
     %
     figure()
-    plot(log(debug.gamma(S,:)'))
+    plot(log(debug.gamma'))
     xlabel("Iteration",'interpreter','latex')
     ylabel("$log \gamma_k^2$",'interpreter','latex')
   end
