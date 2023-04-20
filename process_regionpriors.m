@@ -375,18 +375,24 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   end
 
   % Region activations
-  S  = true(meta.K,1);
+  S = true(meta.K,1);
   n = zeros(meta.K,1);
-  R = [];
-  unassigned = true(meta.N,1);
+  R = cell( 3*(meta.K-1),1 );
+  unassigned = true(meta.N/3,1);
   for k = 1:(meta.K-1)
-    R{k} = atlas_regions(k).Vertices;
-    n(k) = size(R{k},2);
+    for nu = 1:3
+      R{3*k-3+nu} = atlas_regions(k).Vertices*3-3+nu;
+    end
+    %R{k} = atlas_regions(k).Vertices;
+    n(k) = size(R{3*k-1},2);
     unassigned(R{k}) = false;
   end
   if any(unassigned)
-    idx = 1:meta.N;
-    R{meta.K} = idx(unassigned);
+    idx = 1:(meta.N/3);
+    for nu = 1:3
+      R{3*meta.K-3+nu} = idx(unassigned)*3-3+nu;
+    end
+    %R{meta.K} = idx(unassigned);
     n(meta.K) = size(R{meta.K},2);
   else
     meta.K = meta.K-1;
@@ -401,7 +407,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   gamma2 = zeros(meta.K,1);
   Gnorm  = vecnorm(G,2,1);
   for k = 1:meta.K
-    gamma2(k) = mean(Gnorm(R{k}));
+    gamma2(k) = median( [Gnorm(R{3*k-3+1}),Gnorm(R{3*k-3+2}),Gnorm(R{3*k-3+3})] );
   end
 
   % === MAIN CYCLE ===
@@ -415,10 +421,10 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
         % kernel is computed using another function
         if iter==1
           % extra computing time if the initial guess was bad
-          params.MaxIter = params.MaxIter*10;
+          params_gradient.MaxIter = params_gradient.MaxIter*10;
           [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
             meta,params_gradient);
-          params.MaxIter = params.MaxIter/10;
+          params_gradient.MaxIter = params_gradient.MaxIter/10;
         end
         [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
           meta,params_gradient);
@@ -447,10 +453,12 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
         % update of gammas  
         for k = 1:meta.K
           nrm = 0;
-          for t = 1:meta.T
-            nrm = nrm + norm(W(R{k},:)*Y(:,t)-mean(W(R{k},:)*Y(:,t)),'fro')^2;
+          for nu = 1:3
+            for t = 1:meta.T
+              nrm = nrm + norm(W(R{3*k-3+nu},:)*Y(:,t)-mean(W(R{3*k-3+nu},:)*Y(:,t)),'fro')^2;
+            end
           end
-          gamma2(k) = 1/( ( nm )/(n(k)*meta.T) ) ;
+          gamma2(k) = 1/( ( nrm )/( 3*n(k)*meta.T ) ) ;
           %gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
         end
         debug.gamma(:,iter+1) = gamma2;
@@ -469,10 +477,10 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
         % full result is computed using another function
         if iter==1
           % extra computing time if the initial guess was bad
-          params.MaxIter = params.MaxIter*10;
+          params_gradient.MaxIter = params_gradient.MaxIter*10;
           [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
             meta,params_gradient);
-          params.MaxIter = params.MaxIter/10;
+          params_gradient.MaxIter = params_gradient.MaxIter/10;
         end
         [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
           meta,params_gradient);
@@ -500,7 +508,11 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
         end
         % update of gammas  
         for k = 1:meta.K
-          gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
+          nrm = 0;
+          for nu = 1:3
+            nrm = nrm + norm(J(R{3*k-3+nu},:)-mean(J(R{3*k-3+nu},:)),'fro')^2;
+          end
+          gamma2(k) = 1/( ( nrm )/( 3*n(k)*meta.T ) ) ;
         end
         debug.gamma(:,iter+1) = gamma2;
       end
@@ -588,9 +600,13 @@ case 'SteepestDescent'
       p  = zeros(meta.N,1);
       for k = 1:meta.K
         if S(k)
-          p(R{k}) = -(Wi(R{k}) - mean(Wi(R{k})) )*gamma2(k);
+          for nu = 1:3
+            p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) - mean(Wi(R{3*k-3+nu})) )*gamma2(k);
+          end
         else
-          p(R{k}) = -(Wi(R{k}) )*gamma2(k);
+          for nu = 1:3
+            p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) )*gamma2(k);
+          end
         end
       end
       p = p + Bi - (G'*(iCOV*(G*Wi)));
@@ -598,9 +614,13 @@ case 'SteepestDescent'
       Ap = zeros(meta.N,1);
       for k = 1:meta.K
         if S(k)
-          Ap(R{k}) = (p(R{k}) - mean(p(R{k})) )*gamma2(k);
+          for nu = 1:3
+            Ap(R{3*k-3+nu}) = (p(R{3*k-3+nu}) - mean(p(R{3*k-3+nu})) )*gamma2(k);
+          end
         else
-          Ap(R{k}) = (p(R{k}) )*gamma2(k);
+          for nu=1:3
+            Ap(R{3*k-3+nu}) = (p(R{3*k-3+nu}) )*gamma2(k);
+          end
         end
       end
       Ap = Ap + (G'*(iCOV*(G*p)));
@@ -622,9 +642,13 @@ case 'ConjugateGradient'
     p  = zeros(meta.N,1);
     for k = 1:meta.K
       if S(k)
-        p(R{k}) = -(Wi(R{k}) - mean(Wi(R{k})) )*gamma2(k);
+        for nu = 1:3
+          p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) - mean(Wi(R{3*k-3+nu})) )*gamma2(k);
+        end
       else
-        p(R{k}) = -(Wi(R{k}) )*gamma2(k);
+        for nu = 1:3
+          p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) )*gamma2(k);
+        end
       end
     end
     p = p + Bi - (G'*(iCOV*(G*Wi)));
@@ -640,12 +664,15 @@ case 'ConjugateGradient'
         end
       end
       Ap = Ap + (G'*(iCOV*(G*p)));
-      alpha = (p'*r) / (p'*Ap);
+      alpha = (r'*r) / (p'*Ap);
       % x_new = x + alpha*p,   r_new = r - alpha*A*p
-      Wi = Wi + alpha*p;
+      r_ = r; %(non-updated r)
+      Wi = Wi + alpha* p;
       r  = r  - alpha*Ap;
       % beta = (A*p)'*r_new / p'*A*p
-      beta = -( Ap'*r )/( p'*Ap );
+      %beta = -( Ap'*r )/( p'*Ap );
+      % beta = r_new'*r_new / r_old'*r_old
+      beta = (r'*r) / ( r_'*r_);
       % p_new = r_new + beta*p
       p  = r + beta*p;
       er = norm(r);
