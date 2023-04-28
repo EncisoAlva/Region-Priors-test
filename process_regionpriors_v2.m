@@ -137,6 +137,19 @@ function OutputFiles = Run(sProcess, sInputs)
   % Inverse options
   Method   = sProcess.options.method.Value{1};
   Modality = sProcess.options.sensortype.Value{1};
+  % Get scouts
+  AtlasList = sProcess.options.scouts.Value;
+  % Convert from older structure (keep for backward compatibility)
+  if isstruct(AtlasList) && ~isempty(AtlasList)
+    AtlasList = {'User scouts', {AtlasList.Label}};
+  end
+  % No scouts selected: exit
+  %if isempty(AtlasList) || ~iscell(AtlasList) || (size(AtlasList,2) < 2) || isempty(AtlasList{1,2})
+  if isempty(AtlasList) || ~iscell(AtlasList) || (size(AtlasList,2) < 2)
+    bst_report('Error', sProcess, [], 'No scout selected.');
+    return;
+  end
+  %
   % Get unique channel files 
   AllChannelFiles = unique({sInputs.ChannelFile});
   % Progress bar
@@ -432,6 +445,11 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
     end
   end
   GL = G*L;
+
+  % patch
+  %S(5) = true;
+  %S = ~S;
+  % end patch
   
   % === INITIALIZE ===
   debug.error = zeros(1,      params.MaxIter);

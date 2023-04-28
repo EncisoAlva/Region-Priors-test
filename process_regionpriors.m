@@ -375,7 +375,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
   end
 
   % Region activations
-  S = true(meta.K,1);
+  S = false(meta.K,1);
   n = zeros(meta.K,1);
   R = cell( 3*(meta.K-1),1 );
   unassigned = true(meta.N,1);
