@@ -6,4 +6,4 @@ In lieu of proper documentation, [in this link](https://drive.google.com/file/d/
 
 _A grosso modo_ we construct the spatial priors based on observations from low-resolution imaging modalities; for instance, we use pictures from post-mortem staining.
 
-<img src="sketch02_v2.png" width="400" height="119">
+<img src="sketch02_v2.png" width="600" height="178">
