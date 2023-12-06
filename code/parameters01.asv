@@ -1,0 +1,40 @@
+% Pre-computes some information from the matrices that are common to all
+% trials, in order to save time (but spending space on disk)
+%  > Column normalized leadfield matrices
+%
+% Author: Julio C Enciso-Alva (2023)
+%         juliocesar.encisoalva@mavs.uta.edu
+%
+
+TargetDirs = {'test01', 'test02', 'test_vol01'};
+
+%% SETUP
+originalPath = pwd;
+addpath(pwd)
+cd('..')
+BasePath  = pwd;
+
+for BaseName = TargetDirs
+%BaseName  = 'test01';
+
+cd(BaseName)
+load("metadata.mat");
+
+% PARAMETERS
+
+% SVD decomposition of leadfield matrix
+[U,S,V] = svd(meta.Leadfield);
+meta.U  = U;
+meta.S  = diag(S);
+meta.V  = V;
+
+% row-normalized
+meta.RowNorms      = vecnorm(G,2,1);
+meta.LeadfieldNorm = meta.Leadfield * diag( meta.RowNorms.^(-1) );
+
+save("metadata","meta");
+
+cd(BasePath)
+end
+
+cd(originalPath)
