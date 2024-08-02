@@ -1,0 +1,5 @@
+*.asv
+*.Rhistory
+data/*
+anat_ref/*
+*.pdf

@@ -1,7 +1,0 @@
-# Cache files #
-###################
-*.asv
-
-# Large files #
-###################
-og_data/
