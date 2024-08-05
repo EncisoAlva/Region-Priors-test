@@ -19,7 +19,7 @@ setappdata(f,'canceling',0);
 %% SETUP
 
 scriptsPath = pwd;
-addpath(pwd)
+addpath(scriptsPath, [scriptsPath,'/sub'])
 cd('..')
 basePath  = pwd;
 cd('./data')
@@ -185,18 +185,8 @@ switch info.SourceType
     tmp_table.Weight = weights;
     meta.asGraph = graph( tmp_table );
   case 'volume'
-    %meta.DipEdges = edges_mine( meta.DT );
-    %weights = zeros( size(meta.DipEdges,1), 1);
-    %for i = 1:size(meta.DipEdges,1)
-    %  weights(i) = norm( meta.DT.Vertices(meta.DipEdges(i,1),:) - meta.DT.Vertices(meta.DipEdges(i,2),:), 2 );
-    %end
+    % regular euclidean distance
 end
-%minDist = zeros(meta.nGridDips,1);
-%for ii = 1:meta.nGridDips
-%  minDist(ii) = min(vecnorm( ...
-%    meta.Gridloc([(1:(ii-1)),((ii+1):meta.nGridDips)],:) - meta.Gridloc(ii,:), 2, 2 ));
-%end
-%meta.minDist = minDist;
 
 % re-referencing
 meta.LeadfieldAvg = meta.LeadfieldOG - mean( meta.LeadfieldOG, 1 );

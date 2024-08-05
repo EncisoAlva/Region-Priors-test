@@ -17,7 +17,7 @@ BaseName   = info.BaseName;
 
 %% SETUP
 originalPath = pwd;
-addpath(pwd)
+addpath(originalPath, [originalPath,'/sub'])
 cd('..')
 basePath = pwd;
 
@@ -49,7 +49,7 @@ for i = 1:nSolvers
 end
 
 cd('..');
-addpath('solvers', 'solvers_aux')
+addpath('solvers', 'solvers/sub')
 
 %% LOAD EVALUATION METRICS
 cd('metrics')
@@ -68,7 +68,7 @@ EvalNames{nEvals+2} = 'Depth';
 EvalNames{nEvals+3} = 'Kappa';
 
 cd('..');
-addpath('metrics', 'metrics_aux')
+addpath('metrics', 'metrics/sub')
 
 %% MAIN LOOP
 count_solv = 0;

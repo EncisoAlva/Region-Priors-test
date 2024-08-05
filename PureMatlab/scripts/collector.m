@@ -13,11 +13,11 @@ function collector(info)
 %
 
 BaseName   = info.BaseName;
-hard_reset = false;
+%hard_reset = false;
 
 %% SETUP
 originalPath = pwd;
-addpath(pwd)
+addpath(originalPath, [originalPath,'/sub'])
 cd('..')
 basePath  = pwd;
 
@@ -25,8 +25,8 @@ basePath  = pwd;
 cd(['./data/', BaseName])
 dataPath = pwd;
 
-load("metadata.mat")
-load("metadata2.mat")
+load("metadata.mat",'meta')
+load("metadata2.mat",'info')
 
 nCases      = info.nTrials;
 nConditions = length(info.SNRvals);
@@ -122,7 +122,7 @@ end
 delete(WB_solv)
 
 % write final result
-cd([basePath, '/stats'])
+cd([basePath, '/data/tables'])
 
 writetable(BIG_TABLE,['EvalMetrics_' BaseName,'.xlsx']);
 
