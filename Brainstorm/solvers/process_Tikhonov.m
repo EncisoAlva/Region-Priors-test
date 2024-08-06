@@ -124,6 +124,8 @@ function OutputFiles = Run(sProcess, sInputs)
   params.PreWhiten   = sProcess.options.Prewhiten.Value;
   params.AbsRequired = sProcess.options.AbsVal.Value;
   params.ResFormat   = sProcess.options.FullKernel.Value{1};
+  %
+  params.Tuner       = sProcess.options.tuning.Value{1};
   %params.MaxIter     = sProcess.options.MaxIter.Value{1};
   %params.PlotError    = sProcess.options.DebugFigs.Value;
   %params.DebugFigures = sProcess.options.DebugFigs.Value;
@@ -134,7 +136,6 @@ function OutputFiles = Run(sProcess, sInputs)
   %params_gradient.Method    = sProcess.options.MethodGrad.Value{1};
   %params_gradient.PlotError = sProcess.options.DebugFigs.Value;
   % Inverse options
-  Tuner   = sProcess.options.tuning.Value{1};
   Modality = sProcess.options.sensortype.Value{1};
   %
   % Get unique channel files 
@@ -170,6 +171,8 @@ function OutputFiles = Run(sProcess, sInputs)
     % Load data covariance matrix
     NoiseCovFile = sStudyChan.NoiseCov(1).FileName;
     NoiseCovMat  = load(file_fullpath(NoiseCovFile));
+    % model-derived parameters
+    params.SourceType  = HeadModelMat.HeadModelType;
 
     % ===== LOOP ON DATA FILES =====
     % Get data files for this channel file
@@ -203,16 +206,11 @@ function OutputFiles = Run(sProcess, sInputs)
       % replace later: using fieldtrip functions to extract leadfield
       % matrix with appropriate filtering of bad channels
       bst_progress('text', 'Estimating inversion kernel...');
-      [InvKernel, Estim, debug] = Compute(...
-        % G : leadfield
+      [InvKernel, Estim, ~] = Compute( ...
         HeadModelMat.Gain(iChannelsData,:), ...
-        % Y :
         DataMat.F(iChannelsData,:), ...
-        % COV : 
-        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ... % noise covariance
-        sScouts, ...
-        params, params_gradient, ...
-        DataMat.Time);
+        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ...
+        params );
 
       % === CREATE OUTPUT STRUCTURE ===
       bst_progress('text', 'Saving source file...');
@@ -231,8 +229,8 @@ function OutputFiles = Run(sProcess, sInputs)
       else
         ResultsMat.nComponents   = 3;
       end
-      ResultsMat.Comment       = ['Source Estimate w/MNE; tuning via ', Tuner];
-      ResultsMat.Function      = Tuner;
+      ResultsMat.Comment       = ['Source Estimate w/MNE; tuning via ', params.Tuner];
+      ResultsMat.Function      = params.Tuner;
       ResultsMat.Time          = DataMat.Time;
       ResultsMat.DataFile      = DataFile;
       ResultsMat.HeadModelFile = HeadModelFile;
@@ -257,12 +255,12 @@ function OutputFiles = Run(sProcess, sInputs)
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['Source Estimate w/MNE; tuned via ' Tuner ' ' Modality]);
+        ['Source Estimate w/MNE; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename
       OutputDir = bst_fileparts(file_fullpath(DataFile));
-      ResultFile = bst_process('GetNewFilename', OutputDir, ['results_', Tuner, '_', Modality, ]);
+      ResultFile = bst_process('GetNewFilename', OutputDir, ['results_', params.Tuner, '_', Modality, ]);
       % Save new file structure
       bst_save(ResultFile, ResultsMat, 'v6');
 
@@ -297,7 +295,7 @@ end
 %%
 % USAGE: x = process_notch('Compute', x, sfreq, FreqList)
 function [kernel, estim, debug] = Compute(G, Y, COV, ...
-  params, params_gradient, time)
+  params)
 % TODO: Add documentation
 %
 %-------------------------------------------------------------------------
@@ -328,38 +326,48 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   debug = [];
   % === METADATA ===
   meta = [];
-  %meta.K = 2;
-  meta.T = size(Y,2);
-  meta.M = size(Y,1);
+  meta.t = size(Y,2);
+  meta.m = size(Y,1);
   switch params.SourceType
     case 'volume'
-      meta.N = size(G,2);
+      meta.n = size(G,2);
     case 'surface'
-      meta.N = size(G,2)/3;
+      meta.n = size(G,2)/3;
   end
+  meta.r = min(meta.m, meta.n);
+  %
+  meta.G = G;
+  meta.Y = Y;
+  meta.COV = COV;
+
+  % SVD decomposition of leadfield matrix
+  [U,S,V] = svd(G, "econ", "vector");
+  meta.U = U;
+  meta.S = S;
+  meta.V = V;
 
   % === PRE PROCESSING ===
   % Prewhitening
-  iCOV = pinv(COV);
+  meta.iCOV = pinv(meta.COV);
   if params.PreWhiten
-    Y = sqrtm(iCOV)*Y;
-    G = sqrtm(iCOV)*G;
-    iCOV = eye(meta.M);
+    meta.Y = sqrtm(iCOV)*meta.Y;
+    meta.G = sqrtm(iCOV)*meta.G;
+    meta.iCOV = eye(meta.M);
   end
   
   % === INITIALIZE ===
-  debug.error = zeros(1,      params.MaxIter);
-  debug.gamma = zeros(meta.K, params.MaxIter+1);
-  debug.sigma = zeros(1,      params.MaxIter+1);
-  debug.modJ  = zeros(1,      params.MaxIter);
-  debug.modE  = zeros(1,      params.MaxIter);
-  debug.modU  = zeros(1,      params.MaxIter);
+  %debug.error = zeros(1,      params.MaxIter);
+  %debug.gamma = zeros(meta.K, params.MaxIter+1);
+  %debug.sigma = zeros(1,      params.MaxIter+1);
+  %debug.modJ  = zeros(1,      params.MaxIter);
+  %debug.modE  = zeros(1,      params.MaxIter);
+  %debug.modU  = zeros(1,      params.MaxIter);
 
   % === PARAMETER TUNING ===
-  pars = Tikhonov_tune();
+  InvParams = Tikhonov_tune(params, meta);
   
   % === MAIN CYCLE ===
-  [kernel, estim ] = Tikhonov();
+  [kernel, estim ] = Tikhonov(params, InvParams, meta);
 
   % Get magnitude at each dipole, for visualization 
   if params.AbsRequired
@@ -380,7 +388,7 @@ end
 
 %% ===== ADDITIONAL FUNCTIONS =====
 
-function [kernel, J] = Tikhonov( meta, info, result, pars, info2 )
+function [kernel, J] = Tikhonov(params, InvParams, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -392,30 +400,22 @@ function [kernel, J] = Tikhonov( meta, info, result, pars, info2 )
 % The parameter alpha is found using Generalized Cross Validation.
 
 % intialize
-switch info2.ResFormat
+switch params.ResFormat
   case {'full', 'both'}
-    J = zeros( pars.n, pars.t );
-    for i = 1:pars.r
-      J = J + ( meta.S(i)/( meta.S(i)^2 + pars.alpha ) ) * ...
-      reshape( meta.V(:,i), pars.n, 1 ) * ( meta.U(:,i)' * result.data.Y );
-    end
+    J = Tikhonov_estimate( meta, params, InvParams.alpha, meta.Y);
   otherwise
     J = [];
 end
-switch info2.ResFormat
+switch params.ResFormat
   case {'kernel', 'both'}
-    kernel = zeros( pars.n, pars.t );
-    for i = 1:pars.r
-      J = J + ( meta.S(i)/( meta.S(i)^2 + pars.alpha ) ) * ...
-      reshape( meta.V(:,i), pars.n, 1 ) * ( meta.U(:,i)' * eye(meta.n) );
-    end
+    kernel = Tikhonov_estimate( meta, params, InvParams.alpha, eye(meta.m));
   otherwise
     kernel = [];
 end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function pars = Tikhonov_tune( meta, info, result, Tuner )
+function InvParams = Tikhonov_tune(params, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -424,13 +424,7 @@ function pars = Tikhonov_tune( meta, info, result, Tuner )
 %
 
 % init
-pars   = [];
-
-% general values
-pars.m = size(meta.Leadfield, 1);
-pars.n = size(meta.Leadfield, 2);
-pars.r = min(pars.m, pars.n);
-pars.t = size(result.data.time, 2);
+InvParams = [];
 
 % hyperparameter tuning via Generalized Cross-Validation
 % starting at median eigenvalue
@@ -442,14 +436,14 @@ for iter = 1:6
   Gs     = zeros( size(alphas) );
   for q = 1:length(alphas)
     alpha = alphas(q);
-    switch Tuner
+    switch params.Tuner
       case 'GCV'
-        Gs(q) = Tikhonov_GCV( meta, result, pars, alpha );
+        Gs(q) = Tikhonov_GCV( meta, params, alpha );
       otherwise
-        Gs(q) = Tikhonov_GCV( meta, result, pars, alpha );
+        Gs(q) = Tikhonov_GCV( meta, params, alpha );
     end
   end
-  switch Tuner
+  switch params.Tuner
     case 'GCV'
       [~, idx]   = min(Gs);
       best_alpha = alphas(idx);
@@ -465,42 +459,47 @@ for iter = 1:6
     scale = scale*10;
   end
 end
-pars.alpha = max(best_alpha, 0.001);
+InvParams.alpha = max(best_alpha, 0.00001);
 
 % print the results nicely
 fprintf("Optimization via GCV for wMNE solver.\n Optimal lambda: ")
-disp(pars.alpha)
+disp(InvParams.alpha)
 fprintf("\n")
 
-% SVD decomposition of leadfield matrix
-[U,S,V] = svd(meta.Leadfield, "econ", "vector");
-pars.U = U;
-pars.S = S;
-pars.V = V;
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function G = Tikhonov_GCV( meta, result, pars, alpha)
+function J = Tikhonov_estimate( meta, params, alpha, YY)
+% short for estimator
+J = zeros( meta.n, meta.t );
+for i = 1:meta.r
+  J = J + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
+    reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
+end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function G = Tikhonov_GCV( meta, params, alpha)
 % Generalized Cross-Validation given the SVD decomposition
 
 % residual of Y from leave-one-out
 G = 0;
-for i = 1:pars.r
-  G = G + ( (alpha/(meta.S(i)^2+alpha)) *  meta.U(:,i)' * result.data.Y ).^2;
+for i = 1:meta.r
+  G = G + ( (alpha/(meta.S(i)^2+alpha)) *  meta.U(:,i)' * YY ).^2;
 end
-for i = (pars.r+1):pars.m
-  G = G + sum( ( meta.U(:,i)' * result.data.Y ).^2 );
+for i = (meta.r+1):meta.m
+  G = G + sum( ( meta.U(:,i)' * YY ).^2 );
 end
 % trace
 tra = 0;
-for i = 1:pars.r
+for i = 1:meta.r
   tra = tra + (( meta.S(i)^2 )/( meta.S(i)^2 + alpha ));
 end
-G = G /( (pars.m - tra)^2 );
+G = G /( (meta.m - tra)^2 );
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function C = Tikhonov_CRESO( meta, result, pars, alpha)
+function C = Tikhonov_CRESO( meta, params, alpha )
 % CRESO
 
 % solution
@@ -518,7 +517,7 @@ C = -R + alpha*N;
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function [N, R] = Tikhonov_Lcurve( meta, result, pars, alpha)
+function [N, R] = Tikhonov_Lcurve( meta, params, alpha )
 % L-Curve Criterion
 
 % solution
