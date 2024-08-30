@@ -1,4 +1,4 @@
-function varargout = process_Tikhonov( varargin )
+function varargout = process_WMNE( varargin )
 % PROCESS_REGION_PRIORS:
 % [This function exists for technical purposes]
 %
@@ -15,12 +15,12 @@ end
 %% ===== GET DESCRIPTION =====
 function sProcess = GetDescription()
   % Description the process
-  sProcess.Comment     = 'Minimum-Norm Estimation (basic)';
+  sProcess.Comment     = 'Weighted Minimum-Norm Estimation';
   sProcess.Category    = 'Custom';
   sProcess.SubGroup    = 'Sources';
   sProcess.Index       = 1000;
   sProcess.FileTag     = '';
-  sProcess.Description = 'github.com/EncisoAlva/Region_Priors';
+  sProcess.Description = 'https://github.com/EncisoAlva/Region-Priors';
   % Definition of the input accepted by this process
   sProcess.InputTypes  = {'data', 'raw'};
   sProcess.OutputTypes = {'data', 'raw'};
@@ -256,7 +256,7 @@ function OutputFiles = Run(sProcess, sInputs)
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['MNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
+        ['WMNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename
@@ -342,12 +342,6 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   meta.Y = Y;
   meta.COV = COV;
 
-  % SVD decomposition of leadfield matrix
-  [U,S,V] = svd(meta.G, "econ", "vector");
-  meta.U = U;
-  meta.S = S;
-  meta.V = V;
-
   % === PRE PROCESSING ===
   % Prewhitening
   meta.iCOV = pinv(meta.COV);
@@ -357,15 +351,28 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
     meta.G = iCOV_half*meta.G;
     meta.iCOV = eye(meta.m);
   end
+
+  % Column normalization
+  meta.ColNorm = vecnorm(meta.G,2,1);
+  meta.G_ = meta.G;
+  for q = 1:size(meta.G,2)
+    meta.G_(:,q) = meta.G(:,q)/meta.ColNorm(q);
+  end
+
+  % SVD decomposition of leadfield matrix
+  [U,S,V] = svd(meta.G_, "econ", "vector");
+  meta.U = U;
+  meta.S = S;
+  meta.V = V;
   
   % === INITIALIZE ===
   %debug.error = zeros(1,      params.MaxIter);
 
   % === PARAMETER TUNING ===
-  InvParams = Tikhonov_tune(params, meta);
+  InvParams = WMNE_tune(params, meta);
   
   % === MAIN CYCLE ===
-  [kernel, estim ] = Tikhonov(params, InvParams, meta);
+  [kernel, estim ] = WMNE(params, InvParams, meta);
 
   % Get magnitude at each dipole, for visualization 
   if params.AbsRequired
@@ -386,7 +393,7 @@ end
 
 %% ===== ADDITIONAL FUNCTIONS =====
 
-function [kernel, J] = Tikhonov(params, InvParams, meta)
+function [kernel, J] = WMNE(params, InvParams, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -400,30 +407,33 @@ function [kernel, J] = Tikhonov(params, InvParams, meta)
 % intialize
 switch params.ResFormat
   case {'full', 'both'}
-    J = TikhonovSol( meta, InvParams.alpha, meta.Y);
+    J = WMNEsol( meta, InvParams.alpha, meta.Y);
   otherwise
     J = [];
 end
 switch params.ResFormat
   case {'kernel', 'both'}
-    kernel = TikhonovSol( meta, InvParams.alpha, eye(meta.m));
+    kernel = WMNEsol( meta, InvParams.alpha, eye(meta.m));
   otherwise
     kernel = [];
 end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function J = TikhonovSol( meta, alpha, YY)
+function J = WMNEsol( meta, alpha, YY)
 % short for estimator
 J = zeros( meta.n, size(YY,2) ); %  m*t or m*n, usable for both
 for i = 1:meta.r
   J = J + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
     reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
 end
+for q = 1:meta.n
+  J(q,:) = J(q,:) / meta.ColNorm(q);
+end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function InvParams = Tikhonov_tune(params, meta)
+function InvParams = WMNE_tune(params, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -538,7 +548,7 @@ function G = metricGCV( meta, alpha)
 % Generalized Cross-Validation given the SVD decomposition
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % residual
 R = norm( meta.G*J - meta.Y, 'fro' )^2;
@@ -558,7 +568,7 @@ function C = metricCRESO( meta, alpha)
 % CRESO: Composite Residual and Smoothing Operator
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;
@@ -575,7 +585,7 @@ function [N, R] = metricLcurve( meta, alpha)
 % L-Curve Criterion
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;
@@ -589,7 +599,7 @@ function U = metricUcurve( meta, alpha)
 % U-curve criterion
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;
