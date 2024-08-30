@@ -80,6 +80,7 @@ function sProcess = GetDescription()
     'Gen. Cross-Validation', 'gcv' ;...
     'L-curve', 'Lcurv' ;...
     'U-curve', 'Ucurv' ;...
+    'CRESO', 'CRESO' ;...
     'Median eigenv.', 'median'; ...
     }'};
   % Option: Sensors selection
@@ -205,12 +206,12 @@ function OutputFiles = Run(sProcess, sInputs)
       %% === ESTIMATION OF PARAMETERS ===
       % replace later: using fieldtrip functions to extract leadfield
       % matrix with appropriate filtering of bad channels
-      bst_progress('text', 'Estimating inversion kernel...');
+      bst_progress('text', 'Computing inversion kernel...');
       [InvKernel, Estim, ~] = Compute( ...
-        HeadModelMat.Gain(iChannelsData,:), ...
-        DataMat.F(iChannelsData,:), ...
-        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ...
-        params );
+        HeadModelMat.Gain(iChannelsData,:), ... % G: leadfield
+        DataMat.F(iChannelsData,:), ...         % Y: EEG data
+        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ... % COV: covariance matrix for Y
+        params ); % parameters of many kinds
 
       % === CREATE OUTPUT STRUCTURE ===
       bst_progress('text', 'Saving source file...');
@@ -222,14 +223,14 @@ function OutputFiles = Run(sProcess, sInputs)
       if params.AbsRequired
         if strcmp(params_gradient.ResFormat,'kernel')
           ResultsMat.nComponents   = 3;
-          disp('Request for asolute value is being ignored.')
+          disp('Request for asolute value is safely ignored.')
         else
           ResultsMat.nComponents   = 1;
         end
       else
         ResultsMat.nComponents   = 3;
       end
-      ResultsMat.Comment       = ['Source Estimate w/MNE; tuning via ', params.Tuner];
+      ResultsMat.Comment       = ['Source Estimate via MNE; tuning via ', params.Tuner];
       ResultsMat.Function      = params.Tuner;
       ResultsMat.Time          = DataMat.Time;
       ResultsMat.DataFile      = DataFile;
@@ -317,7 +318,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
 %
 %   kernel  (W) Inversion kernel such that J=W*Y, NxM
 %    estim  (J) Estimation of current density, NxT
-%    debug  Errors and gamma at each iteration
+%    debug  [used on other functions]
 %
 %-------------------------------------------------------------------------
 % Author: Julio Cesar Enciso-Alva, 2024
@@ -328,12 +329,13 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   meta = [];
   meta.t = size(Y,2);
   meta.m = size(Y,1);
-  switch params.SourceType
-    case 'volume'
-      meta.n = size(G,2);
-    case 'surface'
-      meta.n = size(G,2)/3;
-  end
+  meta.n = size(G,2);
+  %switch params.SourceType
+  %  case 'volume'
+  %    meta.n = size(G,2)/3;
+  %  case 'surface'
+  %    meta.n = size(G,2);
+  %end
   meta.r = min(meta.m, meta.n);
   %
   meta.G = G;
@@ -350,18 +352,14 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   % Prewhitening
   meta.iCOV = pinv(meta.COV);
   if params.PreWhiten
-    meta.Y = sqrtm(iCOV)*meta.Y;
-    meta.G = sqrtm(iCOV)*meta.G;
-    meta.iCOV = eye(meta.M);
+    iCOV_half = sqrtm(meta.iCOV);
+    meta.Y = iCOV_half*meta.Y;
+    meta.G = iCOV_half*meta.G;
+    meta.iCOV = eye(meta.m);
   end
   
   % === INITIALIZE ===
   %debug.error = zeros(1,      params.MaxIter);
-  %debug.gamma = zeros(meta.K, params.MaxIter+1);
-  %debug.sigma = zeros(1,      params.MaxIter+1);
-  %debug.modJ  = zeros(1,      params.MaxIter);
-  %debug.modE  = zeros(1,      params.MaxIter);
-  %debug.modU  = zeros(1,      params.MaxIter);
 
   % === PARAMETER TUNING ===
   InvParams = Tikhonov_tune(params, meta);
@@ -402,15 +400,25 @@ function [kernel, J] = Tikhonov(params, InvParams, meta)
 % intialize
 switch params.ResFormat
   case {'full', 'both'}
-    J = Tikhonov_estimate( meta, params, InvParams.alpha, meta.Y);
+    J = TikhonovSol( meta, InvParams.alpha, meta.Y);
   otherwise
     J = [];
 end
 switch params.ResFormat
   case {'kernel', 'both'}
-    kernel = Tikhonov_estimate( meta, params, InvParams.alpha, eye(meta.m));
+    kernel = TikhonovSol( meta, InvParams.alpha, eye(meta.m));
   otherwise
     kernel = [];
+end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function J = TikhonovSol( meta, alpha, YY)
+% short for estimator
+J = zeros( meta.n, size(YY,2) ); %  m*t or m*n, usable for both
+for i = 1:meta.r
+  J = J + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
+    reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
 end
 end
 
@@ -426,109 +434,171 @@ function InvParams = Tikhonov_tune(params, meta)
 % init
 InvParams = [];
 
-% hyperparameter tuning via Generalized Cross-Validation
-% starting at median eigenvalue
-best_alpha = median(meta.S)^2;
-scale  = 10;
-for iter = 1:6
-  % try many values for alpha, compute GCV value for each, get the min
-  alphas = best_alpha * (2.^( (-scale):(scale/10):scale ));
-  Gs     = zeros( size(alphas) );
-  for q = 1:length(alphas)
-    alpha = alphas(q);
-    switch params.Tuner
-      case 'GCV'
-        Gs(q) = Tikhonov_GCV( meta, params, alpha );
-      otherwise
-        Gs(q) = Tikhonov_GCV( meta, params, alpha );
+switch params.Tuner
+  case 'median'
+    % median eigenvalue
+    InvParams.alpha = median(meta.S)^2;
+  otherwise
+    % common cyle for the other algorithms
+    % starting at median eigenvalue
+    best_alpha = median(meta.S)^2;
+    scale  = 10;
+    for iter = 1:4
+      % try values for alpha, compute quanity, get the min
+      alphas = best_alpha * (2.^( (-scale):(scale/10):scale ));
+      switch params.Tuner
+        case 'gcv'
+          % Generalized Cross-Validation
+          Gs = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Gs(q) = metricGCV( meta, alpha );
+          end
+          [~, idx]   = min(Gs);
+          best_alpha = alphas(idx);
+        case 'Lcurv'
+          % L-curve criterion
+          Ns = zeros( size(alphas) );
+          Rs = zeros( size(alphas) );
+          if iter==1
+            maxN = -Inf; maxR = -Inf;
+          end
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            [Ns(q), Rs(q)] = metricLcurve( meta, alpha);
+          end
+          % scaling, mimicking how I do it manually
+          maxN = max(maxN, max(abs(Ns)));
+          maxR = max(maxR, max(abs(Rs)));
+          % finding the 'elbow' the way I do it manually
+          [~,idx] = min( abs(Ns)/maxN +abs(Rs)/maxR );
+          best_alpha = alphas(idx);
+        case 'Ucurv'
+          % U-curve criterion
+          Us = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Us(q) = metricUcurve( meta, alpha );
+          end
+          [~, idx]   = min(Us);
+          best_alpha = alphas(idx);
+        case 'CRESO'
+          % Composite Residual and Smoothing Operator
+          Cs = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Cs(q) = metricCRESO( meta, alpha );
+          end
+          % numerical derivative
+          dCs = zeros( size(alphas) );
+          dCs(1)   = ( Cs(2)   - Cs(1)     )/(alphas(2)   - alphas(1));
+          dCs(end) = ( Cs(end) - Cs(end-1) )/(alphas(end) - alphas(end-1));
+          for q = 2:(length(alphas)-1)
+            dCs(q) = ( Cs(q+1) - Cs(q-1) )/(alphas(q+1) - alphas(q-1));
+          end
+          % first root of the derivative
+          idx = find( dCs>0, 1, 'last' );
+          best_alpha = alphas(idx);
+        otherwise
+          % will default to medain eigenvalue
+          break
+      end
+      % if not on the border, reduce scale; else, increase it
+      if (1<idx) && (idx<length(alphas))
+        scale = scale/10;
+      else
+        scale = scale*10;
+      end
     end
-  end
-  switch params.Tuner
-    case 'GCV'
-      [~, idx]   = min(Gs);
-      best_alpha = alphas(idx);
-    otherwise
-      [~, idx]   = min(Gs);
-      best_alpha = alphas(idx);
-  end
-  %
-  % if not on the border, reduce scale; else, increase it
-  if (1<idx) && (idx<length(Gs))
-    scale = scale/10;
-  else
-    scale = scale*10;
-  end
+    InvParams.alpha = max(best_alpha, 0.00001);
 end
-InvParams.alpha = max(best_alpha, 0.00001);
 
 % print the results nicely
-fprintf("Optimization via GCV for wMNE solver.\n Optimal lambda: ")
-disp(InvParams.alpha)
-fprintf("\n")
-
+switch params.Tuner
+  case 'median'
+    fprintf("Parameter tuning using median eigenvalue.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'gcv'
+    fprintf("Parameter tuning via Generalized Cross-Validation.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'Lcurv'
+    fprintf("Parameter tuning using L-curve criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'Ucurv'
+    fprintf("Parameter tuning using U-curve criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'CRESO'
+    fprintf("Parameter tuning using Composite Residual and Smoothing Operator (CRESO) criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function J = Tikhonov_estimate( meta, params, alpha, YY)
-% short for estimator
-J = zeros( meta.n, meta.t );
-for i = 1:meta.r
-  J = J + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
-    reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
-end
-end
-
-%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function G = Tikhonov_GCV( meta, params, alpha)
+function G = metricGCV( meta, alpha)
 % Generalized Cross-Validation given the SVD decomposition
 
-% residual of Y from leave-one-out
-G = 0;
-for i = 1:meta.r
-  G = G + ( (alpha/(meta.S(i)^2+alpha)) *  meta.U(:,i)' * YY ).^2;
-end
-for i = (meta.r+1):meta.m
-  G = G + sum( ( meta.U(:,i)' * YY ).^2 );
-end
+% solution
+J = TikhonovSol( meta, alpha, meta.Y);
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+
 % trace
 tra = 0;
 for i = 1:meta.r
   tra = tra + (( meta.S(i)^2 )/( meta.S(i)^2 + alpha ));
 end
-G = G /( (meta.m - tra)^2 );
+
+% GCV quantity
+G = R /( (meta.m - tra)^2 );
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function C = Tikhonov_CRESO( meta, params, alpha )
-% CRESO
+function C = metricCRESO( meta, alpha)
+% CRESO: Composite Residual and Smoothing Operator
 
 % solution
-J = meta.Leadfield' * pinv( eye(pars.m) + alpha * meta.Leadfield * meta.Leadfield' ) * result.data.Y;
+J = TikhonovSol( meta, alpha, meta.Y);
 
 % norm
-N = vecnorm( J, 2 )^2;
+N = norm( J, 'fro' )^2;
 
 % residual
-R = vecnorm( meta.Leadfield*J - result.data.Y, 2 )^2;
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
 
+% CRESO quantity
 C = -R + alpha*N;
-%C = -R + N;
-
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function [N, R] = Tikhonov_Lcurve( meta, params, alpha )
+function [N, R] = metricLcurve( meta, alpha)
 % L-Curve Criterion
 
 % solution
-J = meta.LeadfieldOG' * pinv( eye(pars.m) + alpha * meta.LeadfieldOG * meta.LeadfieldOG' ) * result.data.Y;
+J = TikhonovSol( meta, alpha, meta.Y);
 
 % norm
-N = vecnorm( J, 2 )^2;
+N = norm( J, 'fro' )^2;
 
 % residual
-R = vecnorm( meta.Leadfield*J - result.data.Y, 2 )^2;
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+end
 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function U = metricUcurve( meta, alpha)
+% U-curve criterion
+
+% solution
+J = TikhonovSol( meta, alpha, meta.Y);
+
+% norm
+N = norm( J, 'fro' )^2;
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+
+% geometric mean of resitual and solution norms
+U = 1/R + 1/N;
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
