@@ -20,7 +20,7 @@ function sProcess = GetDescription()
   sProcess.SubGroup    = 'Sources';
   sProcess.Index       = 1000;
   sProcess.FileTag     = '';
-  sProcess.Description = 'github.com/EncisoAlva/region_priors';
+  sProcess.Description = 'github.com/EncisoAlva/Region_Priors';
   % Definition of the input accepted by this process
   sProcess.InputTypes  = {'data', 'raw'};
   sProcess.OutputTypes = {'data', 'raw'};
@@ -28,10 +28,10 @@ function sProcess = GetDescription()
   %sProcess.nMinFiles   = 1;
   %
   % Debug options
-  sProcess.options.Debug.Comment    = 'Enable debug options';
-  sProcess.options.Debug.Type       = 'checkbox';
-  sProcess.options.Debug.Value      = 0; % Selected or not by default
-  sProcess.options.Debug.Controller = 'Debug';
+  %sProcess.options.Debug.Comment    = 'Enable debug options';
+  %sProcess.options.Debug.Type       = 'checkbox';
+  %sProcess.options.Debug.Value      = 0; % Selected or not by default
+  %sProcess.options.Debug.Controller = 'Debug';
   %sProcess.options.Debug.Hidden  = 0;
   %
   %sProcess.options.DebugFigs.Comment = 'Show debug figures';
