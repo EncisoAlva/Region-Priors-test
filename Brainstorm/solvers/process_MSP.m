@@ -1,4 +1,4 @@
-function varargout = process_Tikhonov( varargin )
+function varargout = process_MSP( varargin )
 % PROCESS_REGION_PRIORS:
 % [This function exists for technical purposes]
 %
@@ -15,12 +15,12 @@ end
 %% ===== GET DESCRIPTION =====
 function sProcess = GetDescription()
   % Description the process
-  sProcess.Comment     = 'Minimum-Norm Estimation (basic)';
+  sProcess.Comment     = 'Weighted Minimum-Norm Estimation';
   sProcess.Category    = 'Custom';
   sProcess.SubGroup    = 'Sources';
   sProcess.Index       = 1000;
   sProcess.FileTag     = '';
-  sProcess.Description = 'github.com/EncisoAlva/Region_Priors';
+  sProcess.Description = 'https://github.com/EncisoAlva/Region-Priors';
   % Definition of the input accepted by this process
   sProcess.InputTypes  = {'data', 'raw'};
   sProcess.OutputTypes = {'data', 'raw'};
@@ -257,7 +257,7 @@ function OutputFiles = Run(sProcess, sInputs)
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['MNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
+        ['WMNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename
@@ -331,23 +331,16 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   meta.t = size(Y,2);
   meta.m = size(Y,1);
   meta.n = size(G,2);
-  %switch params.SourceType
-  %  case 'volume'
-  %    meta.n = size(G,2)/3;
-  %  case 'surface'
-  %    meta.n = size(G,2);
-  %end
-  meta.r = min(meta.m, meta.n);
+  switch params.SourceType
+    case 'surface'
+      meta.nDips = meta.n;
+    case 'volume'
+      meta.nDips = meta.n/3;
+  end
   %
   meta.G = G;
   meta.Y = Y;
   meta.COV = COV;
-
-  % SVD decomposition of leadfield matrix
-  [U,S,V] = svd(meta.G, "econ", "vector");
-  meta.U = U;
-  meta.S = S;
-  meta.V = V;
 
   % === PRE PROCESSING ===
   % Prewhitening
@@ -358,15 +351,99 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
     meta.G = iCOV_half*meta.G;
     meta.iCOV = eye(meta.m);
   end
+
+  % Column normalization
+  meta.ColNorm = vecnorm(meta.G,2,1);
+  meta.G_ = meta.G;
+  for q = 1:size(meta.G,2)
+    meta.G_(:,q) = meta.G(:,q)/meta.ColNorm(q);
+  end
+
+  % SVD decomposition of leadfield matrix
+  [U,S,V] = svd(meta.G_, "econ", "vector");
+  meta.U = U;
+  meta.S = S;
+  meta.V = V;
+
+  % finding an appropriate number of eigenvalues
+  tmp     = cumsum(meta.S) / sum(meta.S);
+  meta.nS = find( tmp > 0.85, 1 );
+
+  % project measurements over the first s eigenvectors of G
+  Us = meta.U(:, (1:meta.nS));
+  WY = vecnorm(meta.Y, 2, 1).^(-1);
+  Ys = Us * Us' * meta.Y;
+  for tt = 1:meta.t
+    Ys(tt) = Ys(tt) / WY(tt);
+  end
+
+  % project G into the projection of Y
+  Ps = Ys * pinv( Ys'*Ys ) * Ys';
+
+  % Activation Probability Map (APM) is defined as follows
+  D = zeros( meta.nDips, 1 );
+  switch params.SourceType
+    case 'surface'
+      for ii = 1:meta.nDips
+        D(ii) = norm( Ps * meta.G_(:,ii), 2 )^2;
+      end
+    case 'volume'
+      for ii = 1:meta.nDips
+        %D(ii) = 0; % redundant
+        for tt = 1:3
+            D(ii) = D(ii) + (norm( Ps * meta.G_(:,3*(ii-1)+tt), 2 )^2)/3;
+        end
+      end
+  end
+  meta.APM = D;
+
+  % fitting a gamma distribution
+  % D ~ Gamma(a,b)
+  [mle,~]  = gamfit(D);
+  meta.gamma_a = mle(1);
+  meta.gamma_b = mle(2);
+  if params.debugFigs
+    figure()
+    histogram(D, 'Normalization', 'pdf')
+    hold on
+    plot((0:0.01:1), gampdf( (0:0.01:1), meta.gamma_a, meta.gamma_b))
+    title('Fitting APM as a gamma distribution')
+    xlabel('Activation Probability Map (APM) value')
+    ylabel('Histogram, normalized to compare with pdf')
+  end
+
+  % APM=1 means that a dipole is 'active', with D ~ gamma(a,b)
+  % I will decide a dipoles is active if P(APM>0)>threshold
+  %meta.APMthreshold_non0 = icdf('gamma', 0.05, meta.gamma_a, meta.gamma_b );
+  %
+  %meta.APMthreshold_top1 = icdf('gamma', 0.90, meta.gamma_a, meta.gamma_b );
+  %idx = 1:meta.nDips;
+  %meta.ActiveDips = idx( meta.APM > meta.APMthreshold_non0 );
+
+  % another thing to do with APM is to create weights
+  meta.W   = 1 - meta.APM *.99; % robustness(?)
+  switch params.SourceType
+    case 'surface'
+      % nothing else
+    case 'volume'
+      meta.W = kron( meta.W, [1,1,1]' );
+  end
+  
+  % SVD decomposition of weighted leadfield matrix
+  pars.GW = meta.G * diag( meta.W.^(-1) );
+  [UW,SW,VW] = svd(meta.GW, "econ", "vector");
+  meta.U = UW;
+  meta.S = SW;
+  meta.V = VW;
   
   % === INITIALIZE ===
   %debug.error = zeros(1,      params.MaxIter);
 
   % === PARAMETER TUNING ===
-  InvParams = Tikhonov_tune(params, meta);
+  InvParams = MSP_tune(params, meta);
   
   % === MAIN CYCLE ===
-  [kernel, estim ] = Tikhonov(params, InvParams, meta);
+  [kernel, estim ] = WMNE(params, InvParams, meta);
 
   % Get magnitude at each dipole, for visualization 
   if params.AbsRequired
@@ -387,7 +464,7 @@ end
 
 %% ===== ADDITIONAL FUNCTIONS =====
 
-function [kernel, J] = Tikhonov(params, InvParams, meta)
+function [kernel, J] = WMNE(params, InvParams, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -401,30 +478,33 @@ function [kernel, J] = Tikhonov(params, InvParams, meta)
 % intialize
 switch params.ResFormat
   case {'full', 'both'}
-    J = TikhonovSol( meta, InvParams.alpha, meta.Y);
+    J = WMNEsol( meta, InvParams.alpha, meta.Y);
   otherwise
     J = [];
 end
 switch params.ResFormat
   case {'kernel', 'both'}
-    kernel = TikhonovSol( meta, InvParams.alpha, eye(meta.m));
+    kernel = WMNEsol( meta, InvParams.alpha, eye(meta.m));
   otherwise
     kernel = [];
 end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function J = TikhonovSol( meta, alpha, YY)
+function J = WMNEsol( meta, alpha, YY)
 % short for estimator
 J = zeros( meta.n, size(YY,2) ); %  m*t or m*n, usable for both
 for i = 1:meta.r
   J = J + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
     reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
 end
+for q = 1:meta.n
+  J(q,:) = J(q,:) / meta.W(q);
+end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function InvParams = Tikhonov_tune(params, meta)
+function InvParams = MSP_tune(params, meta)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -539,7 +619,7 @@ function G = metricGCV( meta, alpha)
 % Generalized Cross-Validation given the SVD decomposition
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % residual
 R = norm( meta.G*J - meta.Y, 'fro' )^2;
@@ -559,7 +639,7 @@ function C = metricCRESO( meta, alpha)
 % CRESO: Composite Residual and Smoothing Operator
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;
@@ -576,7 +656,7 @@ function [N, R] = metricLcurve( meta, alpha)
 % L-Curve Criterion
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;
@@ -590,7 +670,7 @@ function U = metricUcurve( meta, alpha)
 % U-curve criterion
 
 % solution
-J = TikhonovSol( meta, alpha, meta.Y);
+J = WMNEsol( meta, alpha, meta.Y);
 
 % norm
 N = norm( J, 'fro' )^2;

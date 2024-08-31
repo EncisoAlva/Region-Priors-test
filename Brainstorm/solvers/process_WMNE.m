@@ -202,6 +202,7 @@ function OutputFiles = Run(sProcess, sInputs)
         bst_report('Error', sProcess, sInputs, 'Surface file is not defined.');
         return;
       end
+      params.SourceType = HeadModelMat.HeadModelType;
 
       %% === ESTIMATION OF PARAMETERS ===
       % replace later: using fieldtrip functions to extract leadfield
@@ -380,7 +381,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
       case 'kernel'
         disp('Absolute values are not computed by this function.')
       case {'full', 'both'}
-        switch meta.Type
+        switch pars.SourceType
           case 'surface'
             estim_abs = abs( estim );
           case 'volume'
