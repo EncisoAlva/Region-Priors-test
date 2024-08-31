@@ -1,4 +1,4 @@
-function varargout = process_regionpriors( varargin )
+function varargout = process_RegionPriors( varargin )
 % PROCESS_REGION_PRIORS:
 % [This function exists for technical purposes]
 %
@@ -15,12 +15,12 @@ end
 %% ===== GET DESCRIPTION =====
 function sProcess = GetDescription()
   % Description the process
-  sProcess.Comment     = 'Source Estimation w/Region Activation Priors';
+  sProcess.Comment     = 'Binary Region Priors';
   sProcess.Category    = 'Custom';
   sProcess.SubGroup    = 'Sources';
   sProcess.Index       = 1000;
   sProcess.FileTag     = '';
-  sProcess.Description = 'github.com/EncisoAlva/region_priors';
+  sProcess.Description = 'https://github.com/EncisoAlva/Region-Priors';
   % Definition of the input accepted by this process
   sProcess.InputTypes  = {'data', 'raw'};
   sProcess.OutputTypes = {'data', 'raw'};
@@ -28,31 +28,35 @@ function sProcess = GetDescription()
   %sProcess.nMinFiles   = 1;
   %
   % Debug options
-  sProcess.options.Debug.Comment    = 'Enable debug options';
-  sProcess.options.Debug.Type       = 'checkbox';
-  sProcess.options.Debug.Value      = 0;                 % Selected or not by default
-  sProcess.options.Debug.Controller = 'Debug';
+  %sProcess.options.Debug.Comment    = 'Enable debug options';
+  %sProcess.options.Debug.Type       = 'checkbox';
+  %sProcess.options.Debug.Value      = 0; % Selected or not by default
+  %sProcess.options.Debug.Controller = 'Debug';
   %sProcess.options.Debug.Hidden  = 0;
   %
   sProcess.options.DebugFigs.Comment = 'Show debug figures';
   sProcess.options.DebugFigs.Type    = 'checkbox';
   sProcess.options.DebugFigs.Value   = 0;                 % Selected or not by default
   sProcess.options.DebugFigs.Class   = 'Debug';
-  %sProcess.options.DebugFigs.Hidden  = 0;
+  sProcess.options.DebugFigs.Hidden  = 0;
   %
-  sProcess.options.MaxIterGrad.Comment = 'Max iterations (Kernel): ';
-  sProcess.options.MaxIterGrad.Type    = 'value';
-  sProcess.options.MaxIterGrad.Value   = {100, '', 0};   % {Default value, units, precision}
-  sProcess.options.MaxIterGrad.Class   = 'Debug';
+  %sProcess.options.MaxIterGrad.Comment = 'Max iterations (Kernel): ';
+  %sProcess.options.MaxIterGrad.Type    = 'value';
+  %sProcess.options.MaxIterGrad.Value   = {100, '', 0};   % {Default value, units, precision}
+  %sProcess.options.MaxIterGrad.Class   = 'Debug';
   %sProcess.options.MaxIterGrad.Hidden  = 0;
   %
-  sProcess.options.MethodGrad.Comment = 'Method (Kernel): ';
-  sProcess.options.MethodGrad.Type    = 'combobox_label';
-  sProcess.options.MethodGrad.Value   = {'ConjugateGradient',...
-    {'ConjugateGradient','SteepestDescent';...
-    'ConjugateGradient','SteepestDescent'}};
-  sProcess.options.MethodGrad.Class   = 'Debug';
+  %sProcess.options.MethodGrad.Comment = 'Method (Kernel): ';
+  %sProcess.options.MethodGrad.Type    = 'combobox_label';
+  %sProcess.options.MethodGrad.Value   = {'ConjugateGradient',...
+  %  {'ConjugateGradient','SteepestDescent';...
+  %  'ConjugateGradient','SteepestDescent'}};
+  %sProcess.options.MethodGrad.Class   = 'Debug';
   %sProcess.options.MethodGrad.Hidden  = 0;
+  %
+  %sProcess.options.scouts.Comment = 'Select active regions: (Default is None)';
+  %sProcess.options.scouts.Type    = 'scout';
+  %sProcess.options.scouts.Value   = {};
   %
   % Process options
   sProcess.options.Prewhiten.Comment = 'Prewhiten';
@@ -60,25 +64,25 @@ function sProcess = GetDescription()
   sProcess.options.Prewhiten.Value   = 0;                 % Selected or not by default
   sProcess.options.DebugFigs.Class   = 'Pre';
   %
-  sProcess.options.MaxIter.Comment = 'Max iterations: ';
-  sProcess.options.MaxIter.Type    = 'value';
-  sProcess.options.MaxIter.Value   = {5, '', 0};   % {Default value, units, precision}
+  %sProcess.options.MaxIter.Comment = 'Max iterations: ';
+  %sProcess.options.MaxIter.Type    = 'value';
+  %sProcess.options.MaxIter.Value   = {5, '', 0};   % {Default value, units, precision}
   %
-  % Definition of the options
-  % Options: Scouts-based
-  %sProcess.options.test1.Type  = {'scout_confirm'};
-  %sProcess.options.test1.Value = [];
-  %sProcess.options.test2.Type = {'scout'};
   % Option: Atlas
-  sProcess.options.AtlasRegions.Comment = 'Select atlas (currently not working):';
-  sProcess.options.AtlasRegions.Type    = 'atlas';
-  sProcess.options.AtlasRegions.Value   = [];    
+  %sProcess.options.AtlasRegions.Comment = 'Select atlas (currently not working):';
+  %sProcess.options.AtlasRegions.Type    = 'atlas';
+  %sProcess.options.AtlasRegions.Value   = [];    
   %
-  % Option: Inverse method
-  sProcess.options.method.Comment = 'Weight estimation (gamma):';
-  sProcess.options.method.Type    = 'combobox_label';
-  sProcess.options.method.Value   = {'mle', {'Max Likelihood', '(future work)'; ...
-                                             'mle',            'mgcv'}};
+  % Option: Parameter Tuning
+  sProcess.options.tuning.Comment = 'Parameter Tuning via';
+  sProcess.options.tuning.Type    = 'combobox_label';
+  sProcess.options.tuning.Value   = {'gcv', {...
+    'Gen. Cross-Validation', 'gcv' ;...
+    'L-curve', 'Lcurv' ;...
+    'U-curve', 'Ucurv' ;...
+    'CRESO', 'CRESO' ;...
+    'Median eigenv.', 'median'; ...
+    }'};
   % Option: Sensors selection
   sProcess.options.sensortype.Comment = 'Sensor type:';
   sProcess.options.sensortype.Type    = 'combobox_label';
@@ -118,20 +122,23 @@ function OutputFiles = Run(sProcess, sInputs)
   % ===== GET OPTIONS =====
   % General
   params = [];
-  params.MaxIter      = sProcess.options.MaxIter.Value{1};
-  params.PlotError    = sProcess.options.DebugFigs.Value;
-  params.PreWhiten    = sProcess.options.Prewhiten.Value;
-  params.DebugFigures = sProcess.options.DebugFigs.Value;
+  params.PreWhiten   = sProcess.options.Prewhiten.Value;
   params.AbsRequired = sProcess.options.AbsVal.Value;
   params.ResFormat   = sProcess.options.FullKernel.Value{1};
   %
-  params_gradient = [];
-  params_gradient.MaxIter   = sProcess.options.MaxIterGrad.Value{1};
-  params_gradient.Method    = sProcess.options.MethodGrad.Value{1};
-  params_gradient.PlotError = sProcess.options.DebugFigs.Value;
+  params.Tuner       = sProcess.options.tuning.Value{1};
+  %params.MaxIter     = sProcess.options.MaxIter.Value{1};
+  %params.PlotError    = sProcess.options.DebugFigs.Value;
+  params.DebugFigures = sProcess.options.DebugFigs.Value;
+  %
+  %params_gradient = [];
+  %params_gradient.MaxIter   = sProcess.options.MaxIterGrad.Value{1};
+  %params_gradient.Tol       = 10^(-10);
+  %params_gradient.Method    = sProcess.options.MethodGrad.Value{1};
+  %params_gradient.PlotError = sProcess.options.DebugFigs.Value;
   % Inverse options
-  Method   = sProcess.options.method.Value{1};
   Modality = sProcess.options.sensortype.Value{1};
+  %
   % Get unique channel files 
   AllChannelFiles = unique({sInputs.ChannelFile});
   % Progress bar
@@ -165,6 +172,8 @@ function OutputFiles = Run(sProcess, sInputs)
     % Load data covariance matrix
     NoiseCovFile = sStudyChan.NoiseCov(1).FileName;
     NoiseCovMat  = load(file_fullpath(NoiseCovFile));
+    % model-derived parameters
+    params.SourceType  = HeadModelMat.HeadModelType;
 
     % ===== LOOP ON DATA FILES =====
     % Get data files for this channel file
@@ -185,67 +194,25 @@ function OutputFiles = Run(sProcess, sInputs)
         return;
       end
 
-      % ===== LOAD SURFACE ATLAS INFO =====
-      % Load the surface filename from results file
-      %ResultsMat_atlas = in_bst_results(DataFile);
-      %ResultsMat_atlas = in_bst_results(DataFile,0,{'SurfaceFile','Atlas'});
-      ResultsMat_atlas = in_bst_data(DataFile);
-      % Error: cannot process results from volume grids
-      if ismember(HeadModelMat.HeadModelType, {'volume', 'mixed'})
-        bst_report('Error', sProcess, sInputs, 'Atlases are not supported yet for volumic grids.');
+      % Forbid this process on mixed head models
+      if ismember(HeadModelMat.HeadModelType, {'mixed'})
+        bst_report('Error', sProcess, sInputs, 'Mixed sources are not supported yet.');
         return;
       elseif isempty(HeadModelMat.SurfaceFile)
         bst_report('Error', sProcess, sInputs, 'Surface file is not defined.');
         return;
-      elseif isfield(ResultsMat_atlas, 'Atlas') && ~isempty(ResultsMat_atlas.Atlas)
-        bst_report('Error', sProcess, sInputs, 'File is already based on an atlas.');
-        return;
       end
-      % Load surface
-      SurfaceMat = in_tess_bst(HeadModelMat.SurfaceFile);
-      if isempty(SurfaceMat.Atlas) 
-        bst_report('Error', sProcess, sInputs, 'No atlases available in the current surface.');
-        return;
-      end
-      % Forbid this process on mixed head models
-      %if (ResultsMat_atlas.nComponents == 0)
-      %  bst_report('Error', sProcess, sInputs, 'Cannot run this process on mixed source models.');
-      %  return;
-      %end
-      % Get the atlas to use
-      iAtlas = [];
-      if ~isempty(sProcess.options.AtlasRegions.Value)
-        iAtlas = find(strcmpi({SurfaceMat.Atlas.Name}, sProcess.options.AtlasRegions.Value));
-        if isempty(iAtlas)
-          bst_report('Warning', sProcess, sInputs, ['Atlas not found: "' sProcess.options.AtlasRegions.Value '"']);
-        end
-      end
-      if isempty(iAtlas)
-        iAtlas = SurfaceMat.iAtlas;
-      end
-      if isempty(iAtlas)
-        iAtlas = 1;
-      end
-      % Check atlas 
-      if isempty(SurfaceMat.Atlas(iAtlas).Scouts)
-        bst_report('Error', sProcess, sInputs, 'No available scouts in the selected atlas.');
-        return;
-      end
-      bst_report('Info', sProcess, sInputs, ['Using atlas: "' SurfaceMat.Atlas(iAtlas).Name '"']);
-      % Get all the scouts in current atlas
-      sScouts = SurfaceMat.Atlas(iAtlas).Scouts;
+      params.SourceType = HeadModelMat.HeadModelType;
 
       %% === ESTIMATION OF PARAMETERS ===
       % replace later: using fieldtrip functions to extract leadfield
       % matrix with appropriate filtering of bad channels
-      bst_progress('text', 'Estimating inversion kernel...');
-      [InvKernel, Estim, debug] = Compute(...
-        HeadModelMat.Gain(iChannelsData,:), ...
-        DataMat.F(iChannelsData,:), ...
-        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ... % noise covariance
-        sScouts, ...
-        params, params_gradient, ...
-        DataMat.Time);
+      bst_progress('text', 'Computing inversion kernel...');
+      [InvKernel, Estim, ~] = Compute( ...
+        HeadModelMat.Gain(iChannelsData,:), ... % G: leadfield
+        DataMat.F(iChannelsData,:), ...         % Y: EEG data
+        NoiseCovMat.NoiseCov(iChannelsData,iChannelsData), ... % COV: covariance matrix for Y
+        params ); % parameters of many kinds
 
       % === CREATE OUTPUT STRUCTURE ===
       bst_progress('text', 'Saving source file...');
@@ -257,15 +224,15 @@ function OutputFiles = Run(sProcess, sInputs)
       if params.AbsRequired
         if strcmp(params_gradient.ResFormat,'kernel')
           ResultsMat.nComponents   = 3;
-          disp('Request for asolute value is being ignored.')
+          disp('Request for asolute value is safely ignored.')
         else
           ResultsMat.nComponents   = 1;
         end
       else
         ResultsMat.nComponents   = 3;
       end
-      ResultsMat.Comment       = ['Source Estimate w/Region Priors; weighted via ', Method];
-      ResultsMat.Function      = Method;
+      ResultsMat.Comment       = ['Source Estimate via MNE; tuning via ', params.Tuner];
+      ResultsMat.Function      = params.Tuner;
       ResultsMat.Time          = DataMat.Time;
       ResultsMat.DataFile      = DataFile;
       ResultsMat.HeadModelFile = HeadModelFile;
@@ -276,31 +243,31 @@ function OutputFiles = Run(sProcess, sInputs)
       ResultsMat.nAvg          = DataMat.nAvg;
       ResultsMat.Leff          = DataMat.Leff;
       ResultsMat.params        = params;
-      ResultsMat.params_grad   = params_gradient;
-      ResultsMat.DebugData     = debug;
+      %ResultsMat.params_grad   = params_gradient;
+      %ResultsMat.DebugData     = debug;
       switch lower(ResultsMat.HeadModelType)
         case 'volume'
           ResultsMat.GridLoc    = HeadModelMat.GridLoc;
           % ResultsMat.GridOrient = [];
         case 'surface'
-          ResultsMat.GridLoc    = [];
-          % ResultsMat.GridOrient = [];
+          ResultsMat.GridLoc    = HeadModelMat.GridLoc;
+          ResultsMat.GridOrient = HeadModelMat.GridOrient;
         case 'mixed'
           ResultsMat.GridLoc    = HeadModelMat.GridLoc;
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['Source Estimate w/Region Priors; weighted via ' Method ' ' Modality]);
+        ['WMNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename
       OutputDir = bst_fileparts(file_fullpath(DataFile));
-      ResultFile = bst_process('GetNewFilename', OutputDir, ['results_', Method, '_', Modality, ]);
+      ResultFile = bst_process('GetNewFilename', OutputDir, ['results_', params.Tuner, '_', Modality, ]);
       % Save new file structure
       bst_save(ResultFile, ResultsMat, 'v6');
 
       % ===== REGISTER NEW FILE =====
-     bst_progress('inc', 1);
+      bst_progress('inc', 1);
       % Create new results structure
       newResult = db_template('results');
       newResult.Comment       = ResultsMat.Comment;
@@ -329,8 +296,8 @@ end
 
 %%
 % USAGE: x = process_notch('Compute', x, sfreq, FreqList)
-function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
-  params, params_gradient, time)
+function [kernel, estim, debug] = Compute(G, Y, COV, ...
+  params)
 % TODO: Add documentation
 %
 %-------------------------------------------------------------------------
@@ -343,6 +310,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
 %
 %-------------------------------------------------------------------------
 % INPUT (OPTIONAL)
+%
 %   params  Additional parameters, like error tolerance and max iterations
 % params_gradient Additional parameters for gradient descent
 %
@@ -351,415 +319,431 @@ function [kernel, estim, debug] = Compute(G, Y, COV, atlas_regions, ...
 %
 %   kernel  (W) Inversion kernel such that J=W*Y, NxM
 %    estim  (J) Estimation of current density, NxT
-%    debug  Errors and gamma at each iteration
+%    debug  [used on other functions]
 %
 %-------------------------------------------------------------------------
-% Author: Julio Cesar Enciso-Alva, 2023
+% Author: Julio Cesar Enciso-Alva, 2024
 %         (juliocesar.encisoalva@mavs.uta.edu)
 %
   debug = [];
   % === METADATA ===
   meta = [];
-  meta.K = size( atlas_regions,2 ) +1;
-  meta.N = size(G,2);
   meta.T = size(Y,2);
   meta.M = size(Y,1);
+  meta.N = size(G,2);
+  %switch params.SourceType
+  %  case 'volume'
+  %    meta.n = size(G,2)/3;
+  %  case 'surface'
+  %    meta.n = size(G,2);
+  %end
+  meta.R = min(meta.M, meta.N);
+  %
+  meta.G = G;
+  meta.Y = Y;
+  meta.COV = COV;
 
   % === PRE PROCESSING ===
   % Prewhitening
-  iCOV = inv(COV);
+  meta.iCOV = pinv(meta.COV);
   if params.PreWhiten
-    Y = sqrtm(iCOV)*Y;
-    G = sqrtm(iCOV)*G;
-    iCOV = eye(meta.M);
+    iCOV_half = sqrtm(meta.iCOV);
+    meta.Y = iCOV_half*meta.Y;
+    meta.G = iCOV_half*meta.G;
+    meta.iCOV = eye(meta.M);
   end
 
-  % Region activations
-  S = false(meta.K,1);
-  n = zeros(meta.K,1);
-  R = cell( 3*(meta.K-1),1 );
-  unassigned = true(meta.N,1);
-  for k = 1:(meta.K-1)
-    for nu = 1:3
-      R{3*k-3+nu} = atlas_regions(k).Vertices*3-3+nu;
-      unassigned(R{3*k-3+nu}) = false;
-    end
-    %R{k} = atlas_regions(k).Vertices;
-    n(k) = size(R{3*k-1},2);
+  % Column normalization
+  meta.ColNorm = vecnorm(meta.G,2,1);
+  meta.G_ = meta.G;
+  for q = 1:size(meta.G,2)
+    meta.G_(:,q) = meta.G(:,q)/meta.ColNorm(q);
   end
-  if any(unassigned)
-    idx = 1:(meta.N);
-    idx = unique(ceil(idx(unassigned)/3-1));
-    for nu = 1:3
-      R{3*meta.K-3+nu} = idx*3-3+nu;
-    end
-    %R{meta.K} = idx(unassigned);
-    n(meta.K) = size(R{meta.K*3-1},2);
-  else
-    meta.K = meta.K-1;
-    n(meta.K) = [];
+
+  % SVD decomposition of leadfield matrix
+  [U,S,V] = svd(meta.G_, "econ", "vector");
+  meta.U = U;
+  meta.S = S;
+  meta.V = V;
+
+  % provisional values for hot start: p1 is empty
+  meta.P  = zeros(meta.N, 1);
+  meta.g0 = 1;
+  meta.g1 = 1;
+  meta.P1 = [];
+  switch info.SourceType
+    case 'surface'
+      meta.nu = meta.N;
+    case 'volume'
+      meta.nu = meta.N*3;
   end
-  if false
-    figure()
-    hold on
-    for k = 1:meta.K
-      idx = unique(ceil(R{k*3-1}/3));
-      if k ~= meta.K
-        %q = k*ones(n(k),1);
-        q = 'blue';
-      else
-        q = 'red';
+
+  % hot start: the WMNE solution
+  oldJ = RegionMNEsol( meta, median(meta.S)^2, meta.Y);
+  switch params.SourceType
+    case 'surface'
+      oldJnorm = vecnorm( oldJ.^2, 2, 2);
+    case 'volume'
+      oldJnorm = vecnorm( dip_norm(oldJ).^2, 2, 2);
+  end
+
+  %initial partition of P0
+  g0 = min( oldJnorm(:) );
+  g1 = max( oldJnorm(:) );
+  N0 = max( sum( oldJnorm < (g0+g1)/2 ), meta.N/2 );
+  lambda0 = median(meta.S)^2*( g1 );
+
+  % loop
+  counter = 0; err = Inf;
+  idxs = 1:meta.N;
+  while (counter < 20) && ( err>10^-5 )
+    counter = counter + 1;
+    for iter2 = 1:5
+      % identification of regions based on a threshold
+      thr = ( N0*g0 + (meta.N-N0)*g1 ) / meta.N;
+      if (thr < min(oldJnorm)) || (thr > max(oldJnorm))
+        thr = ( min(oldJnorm) + max(oldJnorm) )/2;
       end
-      scatter3( forward_model_icbm152.GridLoc(idx,1),...
-        forward_model_icbm152.GridLoc(idx,2),...
-        forward_model_icbm152.GridLoc(idx,3),100,q,'.')
+      R0  = ( oldJnorm <= thr );
+      R1  = ( oldJnorm >  thr );
+      N0  = sum(R0);
+      %
+      if params.DebugFigures
+        figure()
+        tiledlayout(2,2)
+        nexttile([1,2])
+        histogram(oldJnorm)
+        xline(thr, '-', {'Threshold'})
+        %
+        nexttile
+        histogram(oldJnorm(R0))
+        nexttile
+        histogram(oldJnorm(R1))
+      end
+      % copmutation of parameters from each region
+      g0  = mean( oldJnorm(R0) );
+      g1  = mean( oldJnorm(R1) );
     end
+    meta.g0 = g0;
+    meta.g1 = g1;
+    meta.P1 = idxs(R1);
+
+    % P-regions matrix
+    switch info.SourceType
+      case 'surface'
+        P = zeros(meta.N, 1);
+        P( R1 ) = 1;
+        nu = meta.N;
+      case 'volume'
+        P = zeros(meta.N*3, 1);
+        P( (kron(R1, [1,1,1]'))>0 ) = 1;
+        nu = meta.N*3;
+    end
+    meta.P  = P;
+    meta.nu = nu;
+    
+    % regional-weighted matrix GA
+    GR = mean( meta.G_(:,P>0), 2 );
+    meta.GA = sqrt(meta.g0)*G_;
+    meta.GA(meta.P1) = meta.GA(meta.P1) + (sqrt(meta.g0+meta.g1)-sqrt(meta.g0))*GR;
+    [U,S,V] = svd(meta.GA, "econ", "vector");
+    meta.U = U;
+    meta.S = S;
+    meta.V = V;
+
+    % parameter tuning
+    InvParams = RegionsMNE_tune(params, meta, lambda0);
+    lambda0   = InvParams.best_lambda;
+
+    % new solution
+    newJ = RegionMNEsol( meta, InvParams.best_lambda, meta.Y);
+    %newJ = Hs * meta.Leadfield' * ...
+    %  pinv( meta.Leadfield*Hs*meta.Leadfield' + best_lambda*eye(pars.M) ) * result.data.Y;
+    err = norm( newJ-oldJ, 'fro' );
+
+    % update for next iteration, if any
+    oldJ = newJ;
+    switch params.SourceType
+      case 'surface'
+        oldJnorm = vecnorm( oldJ.^2, 2, 2);
+      case 'volume'
+        oldJnorm = vecnorm( dip_norm(oldJ).^2, 2, 2);
+    end
+    maxJ = max(oldJnorm(:));
+
+    % print partial results
+    fprintf("Iter %2d. Err = %3.3d. (0.00): %5d dips. (0.05) : %4d dips.  (0.50) : %3d dips.\n", ...
+      counter, err, sum(oldJnorm~=0), sum(oldJnorm>0.05*maxJ), sum(oldJnorm>0.5*maxJ))
   end
-  
+
+  % X ~ chi(1)
+  %   E[   X ] = 1
+  % Var(   X ) = 2
+  %   E[ k*X ] = k
+  % Var( k*X ) = 2*k^2
+
   % === INITIALIZE ===
-  debug.error = zeros(1,      params.MaxIter);
-  debug.gamma = zeros(meta.K, params.MaxIter+1);
-  debug.sigma = zeros(1,      params.MaxIter+1);
+  %debug.error = zeros(1,      params.MaxIter);
 
-  gamma2 = zeros(meta.K,1);
-  Gnorm  = vecnorm(G,2,1);
-  for k = 1:meta.K
-    gamma2(k) = median( [Gnorm(R{3*k-3+1}),Gnorm(R{3*k-3+2}),Gnorm(R{3*k-3+3})] )^2;
-  end
-
+  % === PARAMETER TUNING ===
+  % already tuned at the last iteration
+  %InvParams = RegionsMNE_tune(params, meta, lambda0);
+  
   % === MAIN CYCLE ===
-  debug.gamma(:,1) = gamma2;
-  debug.sigma(1)   = mean(diag(iCOV));
-  switch params.ResFormat
-    case {'kernel','both'}
-      W  = zeros(meta.N, meta.M);
-      Id = eye(meta.M);
-      for iter = 1:params.MaxIter
-        % kernel is computed using another function
-        if iter==1
-          % extra computing time if the initial guess was bad
-          params_gradient.MaxIter = params_gradient.MaxIter*10;
-          [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
-            meta,params_gradient);
-          params_gradient.MaxIter = params_gradient.MaxIter/10;
-        end
-        [W,~] = GradDescent(G,iCOV,gamma2,R,S,Id,W, ...
-          meta,params_gradient);
-        if params.DebugFigures
-          figure()
-          random_line = W(5942,:)*Y;
-          plot(time,random_line) % arbitrary dipole in region where the actual source is located
-          xlabel('Time [s]')
-          ylabel('Current density (J) []')
-        end
-        err = 0;
-        for t = 1:meta.T
-          err = err + norm(G*W*Y-Y,'fro');
-        end
-        debug.error(:,iter) = err/(meta.N*meta.T);
-        % covariance of residuals
-        Q = zeros(meta.M,meta.M);
-        for t = 1:meta.T
-          Q = Q + (G*W*Y(:,t)-Y(:,t))*(G*W*Y(:,t)-Y(:,t))';
-        end
-        Q = Q/meta.T;
-        debug.sigma(iter+1) = mean(diag(Q));
-        if params.DebugFigures
-          PLotCov(Q);
-        end
-        % update of gammas  
-        for k = 1:meta.K
-          nrm = 0;
-          for nu = 1:3
-            for t = 1:meta.T
-              nrm = nrm + norm(W(R{3*k-3+nu},:)*Y(:,t)-mean(W(R{3*k-3+nu},:)*Y(:,t)),'fro')^2;
-            end
-          end
-          gamma2(k) = 1/( ( nrm )/( 3*n(k)*meta.T ) ) ;
-          %gamma2(k) = 1/( ( norm(J(R{k},:)-mean(J(R{k},:)),'fro')^2 )/(n(k)*meta.T) ) ;
-        end
-        debug.gamma(:,iter+1) = gamma2;
-      end
-      switch params.ResFormat
-        case 'kernel'
-          kernel = W;
-          estim  = [];
-        case 'both'
-          kernel = W;
-          estim  = W*Y;
-      end
-    case 'full'
-      J = zeros(meta.N, meta.T);
-      for iter = 1:params.MaxIter
-        % full result is computed using another function
-        if iter==1
-          % extra computing time if the initial guess was bad
-          params_gradient.MaxIter = params_gradient.MaxIter*10;
-          [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
-            meta,params_gradient);
-          params_gradient.MaxIter = params_gradient.MaxIter/10;
-        end
-        [J,~] = GradDescent(G,iCOV,gamma2,R,S,Y,J, ...
-          meta,params_gradient);
-        if params.DebugFigures
-          figure()
-          random_line = J(5942,:);
-          plot(time,random_line) % arbitrary dipole in region where the actual source is located
-          xlabel('Time [s]')
-          ylabel('Current density (J) []')
-        end
-        err = 0;
-        for t = 1:meta.T
-          err = err + norm(G*J-Y,'fro');
-        end
-        debug.error(:,iter) = err/(meta.N*meta.T);
-        % covariance of residuals
-        Q = zeros(meta.M,meta.M);
-        for t = 1:meta.T
-          Q = Q + (G*J(:,t)-Y(:,t))*(G*J(:,t)-Y(:,t))';
-        end
-        Q = Q/meta.T;
-        debug.sigma(iter+1) = mean(diag(Q));
-        if params.DebugFigures
-          PLotCov(Q);
-        end
-        % update of gammas  
-        for k = 1:meta.K
-          nrm = 0;
-          for nu = 1:3
-            nrm = nrm + norm(J(R{3*k-3+nu},:)-mean(J(R{3*k-3+nu},:)),'fro')^2;
-          end
-          gamma2(k) = 1/( ( nrm )/( 3*n(k)*meta.T ) ) ;
-        end
-        debug.gamma(:,iter+1) = gamma2;
-      end
-      kernel = [];
-      estim  = J;
-  end
+  [kernel, estim ] = RegionMNE(params, InvParams, meta);
+  %RegionMNEsol( meta, InvParams.best_lambda, P, g0, g1, meta.Y);
+
   % Get magnitude at each dipole, for visualization 
   if params.AbsRequired
     switch params.ResFormat
       case 'kernel'
         disp('Absolute values are not computed by this function.')
       case {'full', 'both'}
-        estim_abs = zeros(meta.N/3,meta.T);
-        for i = 1:meta.N/3
-          estim_abs(i,:) = vecnorm( estim((3*(i-1)+(1:3)),:), 2,1 );
+        switch params.SourceType
+          case 'surface'
+            estim_abs = abs( estim );
+          case 'volume'
+            estim_abs = dip_norm( estim );
         end
-      estim = estim_abs;
+        estim = estim_abs;
     end
-  end
-  if params.DebugFigures
-    figure()
-    plot(log(debug.error))
-    %title("Covariance matrix for $Y$",'interpreter','latex')
-    xlabel("Iteration",'interpreter','latex')
-    ylabel("$log \left\Vert G \hat{J} - Y\right\Vert_F$",'interpreter','latex')
-    %
-    figure()
-    plot(log(debug.gamma'))
-    xlabel("Iteration",'interpreter','latex')
-    ylabel("$log \gamma_k^2$",'interpreter','latex')
   end
 end
 
 %% ===== ADDITIONAL FUNCTIONS =====
 
-function [W, debug_info] = ...
-  GradDescent(G,iCOV,gamma2,R,S,B,W0, meta,params)
-% This algorithm solves the following system for W
-%       [ G'*iCOV*G + (I-A)*GAMMA2 ] * W = iCOV*G'*B
-% via Gradient Descent. This implementation is optimized for the particular
-% matrices that occur in the context of the probelm of interest.
+function [kernel, J] = RegionMNE(params, InvParams, meta)
+% Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
+% regularized estimation
+%   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
+% with W the weight induced by column-normalization of G and ||*||_F is the
+% Frobenius norm.
 %
-% Two method implemented: steepest gradient descent, conjugate gradient.
+% The same is achieved by column-normalizing G and unit weight for J.
 %
-%-------------------------------------------------------------------------
-% INPUT
+% The parameter alpha is found using Generalized Cross Validation.
+
+% intialize
+switch params.ResFormat
+  case {'full', 'both'}
+    J = RegionMNEsol( meta, InvParams.alpha, meta.Y);
+  otherwise
+    J = [];
+end
+switch params.ResFormat
+  case {'kernel', 'both'}
+    kernel = RegionMNEsol( meta, InvParams.alpha, eye(meta.m));
+  otherwise
+    kernel = [];
+end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function JB = RegionMNEsol( meta, alpha, YY)
+% short for estimator
+JB = zeros( meta.n, size(YY,2) ); %  m*t or m*n, usable for both
+for i = 1:meta.r
+  JB = JB + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
+    reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
+end
+JR = mean( JB(meta.P1,:), 2 );
+J  = meta.g0*JB;
+if ~empty(meta.P1)
+  J(meta.P1) = J(meta.P1) + meta.g1*JR;
+end
+
+for q = 1:meta.n
+  J(q,:) = J(q,:) / meta.ColNorm(q);
+end
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function InvParams = WMNE_tune(params, meta, lambda0)
+% Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
+% regularized estimation
+%   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
+% with W the weight induced by column-normalization of G and ||*||_F is the
+% Frobenius norm.
 %
-%        G  Leadfiel matrix, MxN
-%     iCOV  Inverse of covariance matrix of Y|J, MxM
-%   gamma2  Regional weights, Kx1
-%       Rk  Region indicators, Nx1
-%        B  (kernel) idetity, M*M (full) Y, MxT
-%       W0  Initial estimation of the kernel, NxM
-%     meta  Metadata of matrices: N, M, K
-%
-%-------------------------------------------------------------------------
-% INPUT (OPTIONAL)
-%   params  Additionalparameters, like error tolerance and max iterations
-%  MaxIter  Max number of iterations
-%   Method  SteepestDescent, ConjugateGradient
-%
-%-------------------------------------------------------------------------
-% OUTPUT
-%
-%        W  (kernel) Inversion kernel, NxM (full) J, N*T
-%
-%-------------------------------------------------------------------------
-% INPUT (OPTIONAL)
-%      ERR  Errors at each iteration
-%
-%-------------------------------------------------------------------------
-% Author: Julio Cesar Enciso-Alva, 2023
-%         (juliocesar.encisoalva@mavs.uta.edu)
-%
-W = W0;
-debug_info = [];
-debug_info.ERR = zeros(meta.M, params.MaxIter);
-switch params.Method
-case 'SteepestDescent'
-  for i = 1:size(W0,2)
-    Bi = G'*iCOV* B(:,i);
-    Wi = W0(:,i);
-    for iter = 1:params.MaxIter
-      % p = b-A*x
-      p  = zeros(meta.N,1);
-      for k = 1:meta.K
-        if S(k)
-          for nu = 1:3
-            p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) - mean(Wi(R{3*k-3+nu})) )*gamma2(k);
+
+% init
+InvParams = [];
+
+switch params.Tuner
+  case 'median'
+    % median eigenvalue
+    InvParams.alpha = lambda0;
+  otherwise
+    % common cyle for the other algorithms
+    % starting at median eigenvalue
+    best_alpha = lambda0;
+    scale  = 10;
+    for iter = 1:4
+      % try values for alpha, compute quanity, get the min
+      alphas = best_alpha * (2.^( (-scale):(scale/10):scale ));
+      switch params.Tuner
+        case 'gcv'
+          % Generalized Cross-Validation
+          Gs = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Gs(q) = metricGCV( meta, alpha );
           end
-        else
-          for nu = 1:3
-            p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) )*gamma2(k);
+          [~, idx]   = min(Gs);
+          best_alpha = alphas(idx);
+        case 'Lcurv'
+          % L-curve criterion
+          Ns = zeros( size(alphas) );
+          Rs = zeros( size(alphas) );
+          if iter==1
+            maxN = -Inf; maxR = -Inf;
           end
-        end
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            [Ns(q), Rs(q)] = metricLcurve( meta, alpha);
+          end
+          % scaling, mimicking how I do it manually
+          maxN = max(maxN, max(abs(Ns)));
+          maxR = max(maxR, max(abs(Rs)));
+          % finding the 'elbow' the way I do it manually
+          [~,idx] = min( abs(Ns)/maxN +abs(Rs)/maxR );
+          best_alpha = alphas(idx);
+        case 'Ucurv'
+          % U-curve criterion
+          Us = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Us(q) = metricUcurve( meta, alpha );
+          end
+          [~, idx]   = min(Us);
+          best_alpha = alphas(idx);
+        case 'CRESO'
+          % Composite Residual and Smoothing Operator
+          Cs = zeros( size(alphas) );
+          for q = 1:length(alphas)
+            alpha = alphas(q);
+            Cs(q) = metricCRESO( meta, alpha );
+          end
+          % numerical derivative
+          dCs = zeros( size(alphas) );
+          dCs(1)   = ( Cs(2)   - Cs(1)     )/(alphas(2)   - alphas(1));
+          dCs(end) = ( Cs(end) - Cs(end-1) )/(alphas(end) - alphas(end-1));
+          for q = 2:(length(alphas)-1)
+            dCs(q) = ( Cs(q+1) - Cs(q-1) )/(alphas(q+1) - alphas(q-1));
+          end
+          % first root of the derivative
+          idx = find( dCs>0, 1, 'last' );
+          best_alpha = alphas(idx);
+        otherwise
+          % will default to medain eigenvalue
+          break
       end
-      p = p + Bi - (G'*(iCOV*(G*Wi)));
-      % alpha = p'*p / p'*A*p
-      Ap = zeros(meta.N,1);
-      for k = 1:meta.K
-        if S(k)
-          for nu = 1:3
-            Ap(R{3*k-3+nu}) = (p(R{3*k-3+nu}) - mean(p(R{3*k-3+nu})) )*gamma2(k);
-          end
-        else
-          for nu=1:3
-            Ap(R{3*k-3+nu}) = (p(R{3*k-3+nu}) )*gamma2(k);
-          end
-        end
-      end
-      Ap = Ap + (G'*(iCOV*(G*p)));
-      alpha = (p'*p) / (p'*Ap);
-      % x_new = x + alpha*p
-      Wi = Wi + alpha*p;
-      debug_info.ERR(i,iter) = norm(p);
-    end
-    W(:,i) = Wi;
-  end
-case 'ConjugateGradient'
-  for i = 1:size(W0,2)
-    % b <- Bi,   x <- Wi
-    Bi = G'*iCOV* B(:,i);
-    Wi = W0(:,i);
-    bestW = Wi;
-    bestE = Inf;
-    % p0 = b-A*x0,   r0 = p0
-    p  = zeros(meta.N,1);
-    for k = 1:meta.K
-      if S(k)
-        for nu = 1:3
-          p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) - mean(Wi(R{3*k-3+nu})) )*gamma2(k);
-        end
+      % if not on the border, reduce scale; else, increase it
+      if (1<idx) && (idx<length(alphas))
+        scale = scale/10;
       else
-        for nu = 1:3
-          p(R{3*k-3+nu}) = -(Wi(R{3*k-3+nu}) )*gamma2(k);
-        end
+        scale = scale*10;
       end
     end
-    p = p + Bi - (G'*(iCOV*(G*Wi)));
-    r = p;
-    for iter = 1:params.MaxIter
-      % alpha = p'*r / p'*A*p
-      Ap = zeros(meta.N,1);
-      for k = 1:meta.K
-        if S(k)
-          Ap(R{k}) = (p(R{k}) - mean(p(R{k})) )*gamma2(k);
-        else
-          Ap(R{k}) = (p(R{k}) )*gamma2(k);
-        end
-      end
-      Ap = Ap + (G'*(iCOV*(G*p)));
-      alpha = (r'*r) / (p'*Ap);
-      % x_new = x + alpha*p,   r_new = r - alpha*A*p
-      r_ = r; %(non-updated r)
-      Wi = Wi + alpha* p;
-      r  = r  - alpha*Ap;
-      % beta = (A*p)'*r_new / p'*A*p
-      %beta = -( Ap'*r )/( p'*Ap );
-      % beta = r_new'*r_new / r_old'*r_old
-      beta = (r'*r) / ( r_'*r_);
-      % p_new = r_new + beta*p
-      p  = r + beta*p;
-      er = norm(r);
-      debug_info.ERR(i,iter) = er;
-      if er < bestE
-        bestE = er;
-        bestW = Wi;
-      end
-    end
-    W(:,i) = bestW;
-  end
+    InvParams.alpha = max(best_alpha, 0.00001);
 end
-if params.PlotError
-  PlotWithErrorshade(1:params.MaxIter,log(debug_info.ERR))
-  xlabel('Iteration')
-  ylabel('log( error )')
+
+% print the results nicely
+switch params.Tuner
+  case 'median'
+    fprintf("Parameter tuning using median eigenvalue.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'gcv'
+    fprintf("Parameter tuning via Generalized Cross-Validation.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'Lcurv'
+    fprintf("Parameter tuning using L-curve criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'Ucurv'
+    fprintf("Parameter tuning using U-curve criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
+  case 'CRESO'
+    fprintf("Parameter tuning using Composite Residual and Smoothing Operator (CRESO) criterion.\n Optimal lambda: %d\n\n",...
+      InvParams.alpha)
 end
 end
 
-%% generic function
-function PlotWithErrorshade(idx, DATA, yl)
-%
-% Plot of mean with variance as a shaded region.
-%
-% Will plot mean( X(t) ) vs t as solid line, and SD( X(t) ) vs t as shaded
-% region. It is created on a new figure().
-%
-%---------------------------
-% Required Inputs:
-%---------------------------
-%   idx   vector of t,    should be 1xN
-%     X   vector of X(t), should be RxN
-%
-%---------------------------
-% Optional Inputs:
-%---------------------------
-%    yl   limits at y-axis
-%
-%---------------------------
-% Output
-%---------------------------
-%    []   Only plot, no value
-%
-MEAN  = mean(DATA,1);
-STD   = mean((DATA-MEAN).^2,1).^(1/2);
-figure()
-% fill( X,Y,C ), fills points (x,y) counterclockwise
-hold on
-fill([idx,fliplr(idx)], [MEAN-STD,fliplr(MEAN+STD)], ...
-  [.7,.7,.7], 'EdgeColor','none' )
-plot(idx,MEAN,'k')
-if nargin == 3
-  ylim(yl)
-end
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function G = metricGCV( meta, alpha)
+% Generalized Cross-Validation given the SVD decomposition
+
+% solution
+J = RegionMNEsol( meta, alpha, meta.Y);
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+
+% trace
+tra = 0;
+for i = 1:meta.r
+  tra = tra + (( meta.S(i)^2 )/( meta.S(i)^2 + alpha ));
 end
 
-%% another generic function
-function PLotCov( C )
-% This function grpahs theinverse correlation matrix C with custom 
-% formatting fitting my personal tastes.
-figure()
-t = tiledlayout(1,2);
-t.Padding = 'compact';
-t.TileSpacing = 'compact';
-nexttile
-imagesc(C);
-colorbar
-title("Inverse of Covariance matrix for $Y$, $\Sigma^{-1}$",'interpreter','latex')
-nexttile
-histogram(C(:))
-title("Histgram of $\Sigma^{-1}$ entries",'interpreter','latex')
-ylabel("Frequency",'interpreter','latex')
+% GCV quantity
+G = R /( (meta.m - tra)^2 );
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function C = metricCRESO( meta, alpha)
+% CRESO: Composite Residual and Smoothing Operator
+
+% solution
+J = RegionMNEsol( meta, alpha, meta.Y);
+
+% norm
+N = norm( J, 'fro' )^2;
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+
+% CRESO quantity
+C = -R + alpha*N;
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function [N, R] = metricLcurve( meta, alpha)
+% L-Curve Criterion
+
+% solution
+J = RegionMNEsol( meta, alpha, meta.Y);
+
+% norm
+N = norm( J, 'fro' )^2;
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function U = metricUcurve( meta, alpha)
+% U-curve criterion
+
+% solution
+J = RegionMNEsol( meta, alpha, meta.Y);
+
+% norm
+N = norm( J, 'fro' )^2;
+
+% residual
+R = norm( meta.G*J - meta.Y, 'fro' )^2;
+
+% geometric mean of resitual and solution norms
+U = 1/R + 1/N;
+end
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+function normJ = dip_norm( J )
+% In the case of unconstrained dpoles, the magnitude of J needs to be
+% extracted. This happens very often so it is made into a function.
+nDips = size(J,1)/3;
+normJ = zeros(nDips, size(J,2));
+for ii = 1:nDips
+  normJ(ii,:) = vecnorm( J(3*(ii-1)+[1,2,3],:), 2, 1 );
+end
+
 end
