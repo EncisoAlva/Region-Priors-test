@@ -15,7 +15,7 @@ end
 %% ===== GET DESCRIPTION =====
 function sProcess = GetDescription()
   % Description the process
-  sProcess.Comment     = 'Weighted Minimum-Norm Estimation';
+  sProcess.Comment     = 'Multivariate Source Prelocalization (MSP)';
   sProcess.Category    = 'Custom';
   sProcess.SubGroup    = 'Sources';
   sProcess.Index       = 1000;
@@ -34,10 +34,10 @@ function sProcess = GetDescription()
   %sProcess.options.Debug.Controller = 'Debug';
   %sProcess.options.Debug.Hidden  = 0;
   %
-  %sProcess.options.DebugFigs.Comment = 'Show debug figures';
-  %sProcess.options.DebugFigs.Type    = 'checkbox';
-  %sProcess.options.DebugFigs.Value   = 0;                 % Selected or not by default
-  %sProcess.options.DebugFigs.Class   = 'Debug';
+  sProcess.options.DebugFigs.Comment = 'Show debug figures';
+  sProcess.options.DebugFigs.Type    = 'checkbox';
+  sProcess.options.DebugFigs.Value   = 0;                 % Selected or not by default
+  sProcess.options.DebugFigs.Class   = 'Debug';
   %sProcess.options.DebugFigs.Hidden  = 0;
   %
   %sProcess.options.MaxIterGrad.Comment = 'Max iterations (Kernel): ';
@@ -129,7 +129,7 @@ function OutputFiles = Run(sProcess, sInputs)
   params.Tuner       = sProcess.options.tuning.Value{1};
   %params.MaxIter     = sProcess.options.MaxIter.Value{1};
   %params.PlotError    = sProcess.options.DebugFigs.Value;
-  %params.DebugFigures = sProcess.options.DebugFigs.Value;
+  params.DebugFigures = sProcess.options.DebugFigs.Value;
   %
   %params_gradient = [];
   %params_gradient.MaxIter   = sProcess.options.MaxIterGrad.Value{1};
@@ -337,6 +337,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
     case 'volume'
       meta.nDips = meta.n/3;
   end
+  meta.r = min(meta.m, meta.n);
   %
   meta.G = G;
   meta.Y = Y;
@@ -360,14 +361,14 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   end
 
   % SVD decomposition of leadfield matrix
-  [U,S,V] = svd(meta.G_, "econ", "vector");
+  [U,S,~] = svd(meta.G_, "econ", "vector");
   meta.U = U;
   meta.S = S;
-  meta.V = V;
+  %meta.V = V;
 
   % finding an appropriate number of eigenvalues
   tmp     = cumsum(meta.S) / sum(meta.S);
-  meta.nS = find( tmp > 0.85, 1 );
+  meta.nS = find( tmp > 0.75, 1 );
 
   % project measurements over the first s eigenvectors of G
   Us = meta.U(:, (1:meta.nS));
@@ -378,6 +379,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   end
 
   % project G into the projection of Y
+  % THIS NEEDS TO BE OPTIMIZED
   Ps = Ys * pinv( Ys'*Ys ) * Ys';
 
   % Activation Probability Map (APM) is defined as follows
@@ -402,7 +404,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   [mle,~]  = gamfit(D);
   meta.gamma_a = mle(1);
   meta.gamma_b = mle(2);
-  if params.debugFigs
+  if params.DebugFigures
     figure()
     histogram(D, 'Normalization', 'pdf')
     hold on
@@ -430,7 +432,10 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   end
   
   % SVD decomposition of weighted leadfield matrix
-  pars.GW = meta.G * diag( meta.W.^(-1) );
+  meta.GW = zeros(size(meta.G));
+  for ii = 1:meta.n
+    meta.GW(:,ii) = meta.G(:,ii) / meta.W(ii);
+  end
   [UW,SW,VW] = svd(meta.GW, "econ", "vector");
   meta.U = UW;
   meta.S = SW;
