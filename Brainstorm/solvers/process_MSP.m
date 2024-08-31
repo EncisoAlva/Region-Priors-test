@@ -257,7 +257,7 @@ function OutputFiles = Run(sProcess, sInputs)
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['WMNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
+        ['MSP Source Estimate; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename

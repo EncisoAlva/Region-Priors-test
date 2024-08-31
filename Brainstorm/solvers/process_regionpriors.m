@@ -257,7 +257,7 @@ function OutputFiles = Run(sProcess, sInputs)
           ResultsMat.GridOrient = HeadModelMat.GridOrient;
       end
       ResultsMat = bst_history('add', ResultsMat, 'compute', ...
-        ['WMNE Source Estimate; tuned via ' params.Tuner ' ' Modality]);
+        ['Binary Region Priors Source Estimate; tuned via ' params.Tuner ' ' Modality]);
         
       % === SAVE OUTPUT FILE ===
       % Output filename
@@ -333,9 +333,9 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   meta.N = size(G,2);
   %switch params.SourceType
   %  case 'volume'
-  %    meta.n = size(G,2)/3;
+  %    meta.N = size(G,2)/3;
   %  case 'surface'
-  %    meta.n = size(G,2);
+  %    meta.N = size(G,2);
   %end
   meta.R = min(meta.M, meta.N);
   %
@@ -370,8 +370,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   meta.P  = zeros(meta.N, 1);
   meta.g0 = 1;
   meta.g1 = 1;
-  meta.P1 = [];
-  switch info.SourceType
+  switch params.SourceType
     case 'surface'
       meta.nu = meta.N;
     case 'volume'
@@ -391,7 +390,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
   g0 = min( oldJnorm(:) );
   g1 = max( oldJnorm(:) );
   N0 = max( sum( oldJnorm < (g0+g1)/2 ), meta.N/2 );
-  lambda0 = median(meta.S)^2*( g1 );
+  alpha_0 = median(meta.S)^2*( g1 );
 
   % loop
   counter = 0; err = Inf;
@@ -424,12 +423,11 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
       g0  = mean( oldJnorm(R0) );
       g1  = mean( oldJnorm(R1) );
     end
-    meta.g0 = g0;
-    meta.g1 = g1;
-    meta.P1 = idxs(R1);
+    meta.g0 = g0/(g0+g1);
+    meta.g1 = g1/(g0+g1);
 
     % P-regions matrix
-    switch info.SourceType
+    switch params.SourceType
       case 'surface'
         P = zeros(meta.N, 1);
         P( R1 ) = 1;
@@ -443,20 +441,21 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
     meta.nu = nu;
     
     % regional-weighted matrix GA
-    GR = mean( meta.G_(:,P>0), 2 );
-    meta.GA = sqrt(meta.g0)*G_;
-    meta.GA(meta.P1) = meta.GA(meta.P1) + (sqrt(meta.g0+meta.g1)-sqrt(meta.g0))*GR;
+    GR = mean( meta.G_(:,meta.P>0), 2 );
+    meta.GA = sqrt(meta.g0)*meta.G_;
+    meta.GA(:,meta.P>0) = meta.GA(:,meta.P>0) + ...
+      (sqrt(meta.g0+meta.g1)-sqrt(meta.g0))*GR * ones(1, sum(meta.P));
     [U,S,V] = svd(meta.GA, "econ", "vector");
     meta.U = U;
     meta.S = S;
     meta.V = V;
 
     % parameter tuning
-    InvParams = RegionsMNE_tune(params, meta, lambda0);
-    lambda0   = InvParams.best_lambda;
+    InvParams = RegionsMNE_tune(params, meta, alpha_0);
+    alpha_0   = InvParams.alpha;
 
     % new solution
-    newJ = RegionMNEsol( meta, InvParams.best_lambda, meta.Y);
+    newJ = RegionMNEsol( meta, InvParams.alpha, meta.Y);
     %newJ = Hs * meta.Leadfield' * ...
     %  pinv( meta.Leadfield*Hs*meta.Leadfield' + best_lambda*eye(pars.M) ) * result.data.Y;
     err = norm( newJ-oldJ, 'fro' );
@@ -472,7 +471,7 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
     maxJ = max(oldJnorm(:));
 
     % print partial results
-    fprintf("Iter %2d. Err = %3.3d. (0.00): %5d dips. (0.05) : %4d dips.  (0.50) : %3d dips.\n", ...
+    fprintf("Iter %2d. Err = %3.3d. (0.00): %5d dips. (0.05) : %4d dips.  (0.50) : %3d dips.\n\n", ...
       counter, err, sum(oldJnorm~=0), sum(oldJnorm>0.05*maxJ), sum(oldJnorm>0.5*maxJ))
   end
 
@@ -487,11 +486,11 @@ function [kernel, estim, debug] = Compute(G, Y, COV, ...
 
   % === PARAMETER TUNING ===
   % already tuned at the last iteration
-  %InvParams = RegionsMNE_tune(params, meta, lambda0);
+  %InvParams = RegionsMNE_tune(params, meta, alpha_0);
   
   % === MAIN CYCLE ===
   [kernel, estim ] = RegionMNE(params, InvParams, meta);
-  %RegionMNEsol( meta, InvParams.best_lambda, P, g0, g1, meta.Y);
+  %RegionMNEsol( meta, InvParams.alpha, P, g0, g1, meta.Y);
 
   % Get magnitude at each dipole, for visualization 
   if params.AbsRequired
@@ -532,7 +531,7 @@ switch params.ResFormat
 end
 switch params.ResFormat
   case {'kernel', 'both'}
-    kernel = RegionMNEsol( meta, InvParams.alpha, eye(meta.m));
+    kernel = RegionMNEsol( meta, InvParams.alpha, eye(meta.M));
   otherwise
     kernel = [];
 end
@@ -541,24 +540,25 @@ end
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 function JB = RegionMNEsol( meta, alpha, YY)
 % short for estimator
-JB = zeros( meta.n, size(YY,2) ); %  m*t or m*n, usable for both
-for i = 1:meta.r
+JB = zeros( meta.N, size(YY,2) ); %  m*t or m*n, usable for both
+for i = 1:meta.R
   JB = JB + ( meta.S(i)/( meta.S(i)^2 + alpha ) ) * ...
-    reshape( meta.V(:,i), meta.n, 1 ) * ( meta.U(:,i)' * YY );
+    reshape( meta.V(:,i), meta.N, 1 ) * ( meta.U(:,i)' * YY );
 end
-JR = mean( JB(meta.P1,:), 2 );
+JR = mean( JB(meta.P>0,:), 1 );
 J  = meta.g0*JB;
-if ~empty(meta.P1)
-  J(meta.P1) = J(meta.P1) + meta.g1*JR;
+if any(meta.P==1)
+  J(meta.P>0,:) = J(meta.P>0,:) + ...
+    meta.g1* ones(sum(meta.P),1)* JR;
 end
 
-for q = 1:meta.n
+for q = 1:meta.N
   J(q,:) = J(q,:) / meta.ColNorm(q);
 end
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-function InvParams = WMNE_tune(params, meta, lambda0)
+function InvParams = RegionsMNE_tune(params, meta, alpha_0)
 % Weighten Minimum-Norm Estimator (wMNE), follows the basic Tikonov
 % regularized estimation
 %   J^ = argmin_J || G*J-Y ||^2_F + alpha || W*J ||^2_F
@@ -572,11 +572,11 @@ InvParams = [];
 switch params.Tuner
   case 'median'
     % median eigenvalue
-    InvParams.alpha = lambda0;
+    InvParams.alpha = alpha_0;
   otherwise
     % common cyle for the other algorithms
     % starting at median eigenvalue
-    best_alpha = lambda0;
+    best_alpha = alpha_0;
     scale  = 10;
     for iter = 1:4
       % try values for alpha, compute quanity, get the min
@@ -680,12 +680,12 @@ R = norm( meta.G*J - meta.Y, 'fro' )^2;
 
 % trace
 tra = 0;
-for i = 1:meta.r
+for i = 1:meta.R
   tra = tra + (( meta.S(i)^2 )/( meta.S(i)^2 + alpha ));
 end
 
 % GCV quantity
-G = R /( (meta.m - tra)^2 );
+G = R /( (meta.M - tra)^2 );
 end
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
